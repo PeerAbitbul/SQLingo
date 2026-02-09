@@ -88,3 +88,7 @@ desktop/backend/build/
 # Exception: Keep electron-builder assets (icons, etc.)
 !desktop/frontend/build/
 
+#folder
+docs/
+scripts/
+

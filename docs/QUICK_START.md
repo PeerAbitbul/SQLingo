@@ -1,93 +1,154 @@
 # SQLingo - Quick Start Guide
 
-This guide will help you set up and run the SQLingo desktop application for development.
+## 🚀 הרצת האפליקציה במצב פיתוח
 
-## 🚀 Development Setup
-
-The system consists of **two parts** that run on your machine:
-1. **Desktop Backend** (Python/FastAPI) - Handles AI logic and database connections.
-2. **Desktop Frontend** (Electron/React) - The user interface.
-
-### Prerequisites
-- **Node.js** 18+
-- **Python** 3.10+
+האפליקציה מורכבת מ-2 חלקים בלבד:
+1. **Backend** - FastAPI server (פורט 39847)
+2. **Frontend** - Electron app
 
 ---
 
-## Step 1: Start Desktop Backend
+## אופציה 1: הרצה אוטומטית (מומלץ)
 
-The backend is responsible for all AI interactions and database queries. It uses a local server on port `39847`.
-
-**Terminal 1:**
 ```bash
-cd desktop/backend
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-python main.py
-```
-
-**Expected Output:**
-```
-[INFO] SQLingo Desktop starting...
-[START] Starting backend server on http://127.0.0.1:39847
-```
-
----
-
-## Step 2: Start Desktop App (Frontend)
-
-The frontend is the Electron shell that provides the UI.
-
-**Terminal 2:**
-```bash
-cd desktop/frontend
-npm install
-npm run electron:dev
-```
-
-**Expected:** The SQLingo desktop application opens.
-
----
-
-## 🔑 AI Provider Configuration
-
-SQLingo is **BYOK (Bring Your Own Key)**. You need to provide your own API keys for the AI providers you want to use.
-
-1. Open the **Settings** menu in the app.
-2. Enter your API keys for:
-   - OpenAI (GPT-4)
-   - Anthropic (Claude)
-   - Google (Gemini)
-   - AWS Bedrock (Credentials)
-
-All keys are stored **locally and encrypted** on your machine.
-
----
-
-## 🛑 Common Issues
-
-### Port Already in Use
-If port `39847` or `5173` is occupied:
-```bash
-# Find and kill process on port (macOS/Linux)
-lsof -i :39847
-kill -9 <PID>
-```
-
-### Database Drivers
-Ensure you have the necessary drivers installed for your database type (e.g., `pymssql` for SQL Server).
-
----
-
-## 💡 Development Tips
-
-### Run Both Concurrently (macOS/Linux)
-You can use the provided startup script:
-```bash
+# מתיקיית הפרויקט הראשית
 ./scripts/start-dev.sh
 ```
 
+הסקריפט יטפל בהכל:
+- ✅ יצירת virtual environment (אם לא קיים)
+- ✅ התקנת dependencies
+- ✅ הרצת Backend
+- ✅ הרצת Frontend
+
 ---
 
-**Happy Querying!**
+## אופציה 2: הרצה ידנית
+
+### שלב 1: הרצת Backend
+
+**טרמינל 1:**
+```bash
+cd desktop/backend
+
+# יצירת virtual environment (פעם ראשונה בלבד)
+python3 -m venv venv
+
+# הפעלת virtual environment
+source venv/bin/activate
+
+# התקנת dependencies (פעם ראשונה בלבד)
+pip install -r requirements.txt
+
+# הרצת הserver
+python main.py
+```
+
+**צפוי לראות:**
+```
+[OK] Using fixed port: 39847
+[START] Starting backend server on http://127.0.0.1:39847
+INFO:     Uvicorn running on http://127.0.0.1:39847
+```
+
+---
+
+### שלב 2: הרצת Frontend
+
+**טרמינל 2:**
+```bash
+cd desktop/frontend
+
+# התקנת dependencies (פעם ראשונה בלבד)
+npm install
+
+# הרצת Electron app
+npm run electron:dev
+```
+
+**צפוי לראות:**
+- חלון Electron נפתח עם האפליקציה
+
+---
+
+## 🔧 דרישות מקדימות
+
+### Python
+```bash
+python3 --version  # צריך להיות 3.8+
+```
+
+### Node.js
+```bash
+node --version     # צריך להיות 16+
+npm --version
+```
+
+---
+
+## 🛑 עצירת האפליקציה
+
+- לחץ `Ctrl+C` בכל אחד מהטרמינלים
+- או סגור את חלון האפליקציה
+
+---
+
+## 📝 הגדרות (אופציונלי)
+
+### Backend (.env)
+```bash
+# desktop/backend/.env
+DEV_MODE=true
+DESKTOP_BACKEND_PORT=39847
+```
+
+### Frontend (.env)
+```bash
+# desktop/frontend/.env
+VITE_BACKEND_URL=http://127.0.0.1:39847
+```
+
+---
+
+## ❓ בעיות נפוצות
+
+### הפורט תפוס
+```bash
+# מצא את התהליך שתופס את הפורט
+lsof -i :39847
+
+# הרוג את התהליך
+kill -9 <PID>
+```
+
+### Backend לא עולה
+```bash
+# בדוק שה-venv מופעל
+which python  # צריך להראות את הנתיב ל-venv
+
+# התקן מחדש dependencies
+pip install -r requirements.txt
+```
+
+### Frontend לא עולה
+```bash
+# נקה cache והתקן מחדש
+rm -rf node_modules package-lock.json
+npm install
+```
+
+---
+
+## 🎯 מה הלאה?
+
+1. **הוסף מפתחות API** - הגדרות → API Keys
+2. **חבר מסד נתונים** - לחץ על "Select Connection"
+3. **התחל לשאול שאלות!** 🚀
+
+---
+
+## 📚 מסמכים נוספים
+
+- `docs/BUILD_GUIDE.md` - בניית האפליקציה לייצור
+- `docs/API_KEY_TROUBLESHOOTING.md` - עזרה עם API keys
+- `docs/CONNECTION_GUIDE.md` - חיבור למסדי נתונים
