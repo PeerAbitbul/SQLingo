@@ -1,0 +1,1398 @@
+"""
+API Routes for Desktop Backend
+
+Architecture:
+- Free desktop-only application
+- AI calls use BYOK (user's own API keys)
+- No authentication or usage limits
+- All data stored locally
+"""
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
+from database.connection import DatabaseConnection
+from database.schema_extractor import SchemaExtractor
+from ai.client import AIClient
+from ai.providers import AIProvider
+from utils.permission_helper import is_permission_error, get_permission_error_response
+
+
+router = APIRouter()
+
+
+async def validate_usage_with_cloud(jwt_token: Optional[str] = None) -> dict:
+    """
+    Validate usage with cloud before allowing query.
+
+    Simplified: User MUST be logged in
+    - No demo mode
+    - No device tracking
+    - Just check user's subscription tier
+    """
+    try:
+        # Check if user is logged in
+        if not jwt_token:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "authentication_required",
+                    "message": "Please log in to use Qognix. Sign up for free to get 25 messages per month!",
+                    "login_required": True,
+                    "signup_url": "https://qognix.com/signup"
+                }
+            )
+
+        # Validate with cloud (check tier and usage limits)
+        cloud = get_cloud_client()
+        validation = await cloud.validate_user_usage(jwt_token=jwt_token)
+
+        # Check if cloud is offline
+        if validation.get("offline"):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "cloud_unavailable",
+                    "message": "Unable to connect to Qognix servers. Please check your internet connection and try again.",
+                    "offline": True
+                }
+            )
+
+        if not validation.get("allowed"):
+            # Usage limit reached
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "usage_limit_reached",
+                    "message": validation.get("message"),
+                    "tier": validation.get("tier"),
+                    "tier_display_name": validation.get("tier_display_name"),
+                    "messages_used": validation.get("messages_used"),
+                    "messages_limit": validation.get("messages_limit"),
+                    "upgrade_url": validation.get("upgrade_url", "https://qognix.com/pricing"),
+                }
+            )
+
+        return validation
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Any error = cloud unavailable = blocked
+        print(f"[ERROR] Cloud validation failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "cloud_unavailable",
+                "message": "Unable to connect to Qognix servers. Please check your internet connection and try again.",
+                "offline": True
+            }
+        )
+
+
+async def increment_usage_in_cloud(
+    ai_provider: str,
+    success: bool = True,
+    error_message: Optional[str] = None,
+    jwt_token: Optional[str] = None
+) -> dict:
+    """
+    Increment usage counter in cloud.
+
+    Simplified - tracks by user_id only (from JWT token)
+    """
+    try:
+        if not jwt_token:
+            # No user logged in - skip tracking
+            return {"success": False, "error": "No user token"}
+
+        cloud = get_cloud_client()
+        result = await cloud.increment_user_usage(
+            jwt_token=jwt_token,
+            ai_provider=ai_provider,
+            success=success,
+            error_message=error_message
+        )
+
+        if result.get("success"):
+            print(f"[INFO] Usage recorded: {result.get('messages_used', 'N/A')}/{result.get('messages_limit', 'N/A')}")
+        else:
+            print(f"[WARN] Failed to record usage: {result.get('error', 'Unknown')}")
+
+        return result
+
+    except Exception as e:
+        # Log but don't fail the request - query already succeeded
+        print(f"[WARN] Failed to record usage in cloud: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# Request/Response Models
+class ConnectionTestRequest(BaseModel):
+    connection_string: str
+    database_type: str  # 'sqlserver', 'postgresql', 'mysql'
+
+class ConnectionTestResponse(BaseModel):
+    success: bool
+    message: str
+
+class SchemaRequest(BaseModel):
+    connection_string: str
+    database_type: str
+
+class SchemaResponse(BaseModel):
+    tables: List[dict]
+    success: bool
+
+class ConversationMessage(BaseModel):
+    role: str  # 'user' or 'assistant'
+    content: str
+
+class BedrockConfig(BaseModel):
+    access_key: str
+    secret_key: str
+    region: str = 'us-east-1'
+
+class ChatRequest(BaseModel):
+    question: str
+    connection_string: str
+    database_type: str
+    ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock'
+    ai_model: Optional[str] = None  # Optional: specific model to use
+    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
+    conversation_history: Optional[List[ConversationMessage]] = None  # Chat history for context
+
+
+class ChatResponse(BaseModel):
+    sql_query: str
+    explanation: str
+    success: bool
+    error: Optional[str] = None
+    tier_limit_reached: Optional[bool] = None  # True when request blocked due to tier limits
+    usage_warning: Optional[str] = None  # "approaching_limit" or "limit_reached"
+
+class QueryExecuteRequest(BaseModel):
+    connection_string: str
+    database_type: str
+    sql_query: str
+
+class GenerateTitleRequest(BaseModel):
+    question: str
+    ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock'
+    ai_model: Optional[str] = None  # Optional: specific model to use
+    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
+
+
+class GenerateTitleResponse(BaseModel):
+    title: str
+    success: bool
+    error: Optional[str] = None
+
+class QueryExecuteResponse(BaseModel):
+    columns: List[str]
+    rows: List[List]
+    row_count: int
+    success: bool
+    error: Optional[str] = None
+
+# Routes
+@router.post("/connection/test", response_model=ConnectionTestResponse)
+async def test_connection(request: ConnectionTestRequest):
+    """Test database connection"""
+    try:
+        db = DatabaseConnection(request.connection_string, request.database_type)
+        success = db.test_connection()
+        
+        if success:
+            return ConnectionTestResponse(
+                success=True,
+                message="Connection successful"
+            )
+        else:
+            return ConnectionTestResponse(
+                success=False,
+                message="Connection failed"
+            )
+    except Exception as e:
+        return ConnectionTestResponse(
+            success=False,
+            message=f"Error: {str(e)}"
+        )
+
+@router.post("/schema/extract", response_model=SchemaResponse)
+async def extract_schema(request: SchemaRequest):
+    """Extract database schema"""
+    try:
+        db = DatabaseConnection(request.connection_string, request.database_type)
+        extractor = SchemaExtractor(db)
+        schema = extractor.get_schema()
+
+        return SchemaResponse(
+            tables=schema,
+            success=True
+        )
+    except Exception as e:
+        # Check if this is a permission error
+        if is_permission_error(str(e), request.database_type):
+            permission_info = get_permission_error_response('schema', request.database_type)
+            error_message = f"{permission_info['message']}\n\n{permission_info['grant_script']}"
+            raise HTTPException(status_code=403, detail=error_message)
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/chat/query", response_model=ChatResponse)
+async def generate_sql(request: ChatRequest, authorization: Optional[str] = Header(None)):
+    """
+    Generate SQL from natural language question
+
+    Flow:
+    1. Validate usage with cloud (check tier limits)
+    2. Extract database schema
+    3. Call AI with user's API key (BYOK)
+    4. Increment usage counter in cloud
+    """
+    try:
+        # Extract JWT token from Authorization header
+        jwt_token = None
+        if authorization and authorization.startswith("Bearer "):
+            jwt_token = authorization.replace("Bearer ", "")
+
+        # STEP 1: Validate usage with cloud (AUTHORITATIVE - prevents manipulation)
+        # User MUST be logged in and have available quota
+        validation = await validate_usage_with_cloud(jwt_token=jwt_token)
+        
+        # Get full schema with all details
+        db = DatabaseConnection(request.connection_string, request.database_type)
+        extractor = SchemaExtractor(db)
+        schema_text = extractor.get_full_schema_text()
+
+        # BYOK Mode - Use user's API key or credentials directly
+        if request.ai_provider == 'bedrock':
+            # Bedrock uses AWS credentials instead of API key
+            if not request.bedrock_config:
+                raise HTTPException(status_code=400, detail="AWS credentials required for Bedrock")
+
+            ai_client = AIClient(
+                provider=AIProvider.BEDROCK,
+                bedrock_config={
+                    'access_key': request.bedrock_config.access_key,
+                    'secret_key': request.bedrock_config.secret_key,
+                    'region': request.bedrock_config.region
+                }
+            )
+        else:
+            # Other providers use API key
+            if not request.api_key:
+                raise HTTPException(status_code=400, detail="API key required")
+
+            ai_client = AIClient(
+                provider=AIProvider(request.ai_provider),
+                api_key=request.api_key
+            )
+
+        # Convert conversation history to dict format
+        history = None
+        if request.conversation_history:
+            history = [{'role': msg.role, 'content': msg.content} for msg in request.conversation_history]
+
+        result = ai_client.generate_sql(
+            question=request.question,
+            schema=schema_text,
+            database_type=request.database_type,
+            model=request.ai_model,  # Pass the model if provided
+            conversation_history=history  # Pass conversation history
+        )
+        
+        # STEP 2: Increment usage in cloud after successful AI call
+        cloud = get_cloud_client()
+        usage_result = await cloud.increment_user_usage(
+            jwt_token=jwt_token,
+            ai_provider=request.ai_provider,
+            success=True
+        )
+        
+        # Get warning from usage result (if approaching limit)
+        usage_warning = None
+        if usage_result.get("warning"):
+            usage_warning = usage_result.get("warning")
+
+        # Check if AI requested procedure information
+        if result.get('procedure_request'):
+            action = result['procedure_request'].get('action')
+
+            from database.schemas.postgres import POSTGRES_SCHEMA_QUERIES
+            from database.schemas.mysql import MYSQL_SCHEMA_QUERIES
+            from database.schemas.mssql import MSSQL_SCHEMA_QUERIES
+
+            db_type = request.database_type.lower()
+
+            if action == 'fetch_procedures_list':
+                # Fetch procedures list from database
+                try:
+                    if db_type == 'postgresql':
+                        query = POSTGRES_SCHEMA_QUERIES['procedures_list']
+                    elif db_type == 'mysql':
+                        query = MYSQL_SCHEMA_QUERIES['procedures_list']
+                    elif db_type in ['mssql', 'sqlserver']:
+                        query = MSSQL_SCHEMA_QUERIES['procedures_list']
+                    else:
+                        raise ValueError(f"Unsupported database type: {request.database_type}")
+
+                    procedures_result = db.execute_query(query)
+
+                    # Format procedures as text
+                    procedures_text = "\n\nStored Procedures:\n"
+                    for row in procedures_result:
+                        proc_name = row.get('procedure_name') or row.get('PROCEDURE_NAME') or ''
+                        proc_type = row.get('type') or row.get('TYPE') or ''
+                        procedures_text += f"  - {proc_name} ({proc_type})\n"
+
+                    # Return explanation with procedures info
+                    return ChatResponse(
+                        sql_query='',
+                        explanation=result['explanation'] + procedures_text,
+                        success=True
+                    )
+                except Exception as proc_error:
+                    # Check if this is a permission error
+                    if is_permission_error(str(proc_error), request.database_type):
+                        permission_info = get_permission_error_response('procedures', request.database_type)
+                        error_explanation = f"{permission_info['message']}\n\n{permission_info['grant_script']}"
+                        return ChatResponse(
+                            sql_query='',
+                            explanation=error_explanation,
+                            success=True  # Success=True so it doesn't break the chat
+                        )
+                    # For other errors, re-raise
+                    raise
+
+            elif action == 'fetch_procedure_definition':
+                # Fetch specific procedure definition
+                procedure_name = result['procedure_request'].get('procedure_name')
+
+                if not procedure_name:
+                    return ChatResponse(
+                        sql_query='',
+                        explanation="Error: No procedure name provided.",
+                        success=False
+                    )
+
+                try:
+                    if db_type == 'postgresql':
+                        query = POSTGRES_SCHEMA_QUERIES['procedure_definition']
+                        proc_result = db.execute_query(query, params=(procedure_name,))
+                    elif db_type == 'mysql':
+                        query = MYSQL_SCHEMA_QUERIES['procedure_definition']
+                        proc_result = db.execute_query(query, params=(procedure_name,))
+                    elif db_type in ['mssql', 'sqlserver']:
+                        query = MSSQL_SCHEMA_QUERIES['procedure_definition']
+                        query = query.replace('@procedure_name', f"'{procedure_name}'")
+                        proc_result = db.execute_query(query)
+                    else:
+                        raise ValueError(f"Unsupported database type: {request.database_type}")
+                except Exception as proc_error:
+                    # Check if this is a permission error
+                    if is_permission_error(str(proc_error), request.database_type):
+                        permission_info = get_permission_error_response('procedures', request.database_type)
+                        error_explanation = f"{permission_info['message']}\n\n{permission_info['grant_script']}"
+                        return ChatResponse(
+                            sql_query='',
+                            explanation=error_explanation,
+                            success=True  # Success=True so it doesn't break the chat
+                        )
+                    # For other errors, re-raise
+                    raise
+
+                if not proc_result or len(proc_result) == 0:
+                    # Procedure not found - try to find similar ones
+                    if db_type == 'postgresql':
+                        list_query = POSTGRES_SCHEMA_QUERIES['procedures_list']
+                    elif db_type == 'mysql':
+                        list_query = MYSQL_SCHEMA_QUERIES['procedures_list']
+                    elif db_type in ['mssql', 'sqlserver']:
+                        list_query = MSSQL_SCHEMA_QUERIES['procedures_list']
+
+                    all_procedures = db.execute_query(list_query)
+
+                    # Find similar procedure names (case-insensitive partial match)
+                    similar = []
+                    search_lower = procedure_name.lower()
+                    for proc in all_procedures:
+                        proc_name_full = proc.get('procedure_name') or proc.get('PROCEDURE_NAME') or ''
+                        if search_lower in proc_name_full.lower() or proc_name_full.lower() in search_lower:
+                            similar.append(proc_name_full)
+
+                    if similar:
+                        suggestions = '\n'.join([f"  - {name}" for name in similar[:5]])  # Show max 5 suggestions
+                        explanation = f"Procedure '{procedure_name}' not found.\n\nDid you mean one of these?\n{suggestions}"
+                    else:
+                        explanation = f"Procedure '{procedure_name}' not found. Use the procedure list to see all available procedures."
+
+                    return ChatResponse(
+                        sql_query='',
+                        explanation=explanation,
+                        success=True  # Success because we're providing helpful suggestions
+                    )
+
+                # Format procedure definition
+                row = proc_result[0]
+                proc_name = row.get('procedure_name') or row.get('PROCEDURE_NAME') or procedure_name
+                proc_type = row.get('type') or row.get('TYPE') or 'PROCEDURE'
+                proc_params = row.get('parameters') or row.get('PARAMETERS') or 'No parameters'
+                proc_def = row.get('definition') or row.get('DEFINITION') or row.get('routine_definition') or row.get('ROUTINE_DEFINITION') or 'Definition not available'
+
+                procedure_text = f"\n\nProcedure: {proc_name}\n"
+                procedure_text += f"Type: {proc_type}\n"
+                procedure_text += f"Parameters: {proc_params}\n\n"
+                procedure_text += f"Definition:\n```sql\n{proc_def}\n```"
+
+                return ChatResponse(
+                    sql_query='',
+                    explanation=result['explanation'] + procedure_text,
+                    success=True
+                )
+
+        # STEP 2: Increment usage in cloud
+        await increment_usage_in_cloud(
+            ai_provider=request.ai_provider,
+            success=True,
+            jwt_token=jwt_token
+        )
+
+        return ChatResponse(
+            sql_query=result['sql'],
+            explanation=result['explanation'],
+            success=True
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log failed attempt in cloud
+        try:
+            await increment_usage_in_cloud(
+                ai_provider=request.ai_provider,
+                success=False,
+                error_message=str(e),
+                jwt_token=jwt_token
+            )
+        except:
+            pass  # Don't fail on logging errors
+
+        return ChatResponse(
+            sql_query="",
+            explanation="",
+            success=False,
+            error=str(e)
+        )
+
+@router.post("/query/execute", response_model=QueryExecuteResponse)
+async def execute_query(request: QueryExecuteRequest):
+    """Execute SELECT query (read-only)"""
+    try:
+        # Remove comments from SQL for validation
+        sql_lines = request.sql_query.strip().split('\n')
+        sql_without_comments = '\n'.join(
+            line for line in sql_lines 
+            if not line.strip().startswith('--')
+        ).strip()
+        
+        # Validate query is read-only based on database type
+        query_upper = sql_without_comments.upper()
+        
+        # Different allowed commands per database type
+        if request.database_type == 'sqlserver':
+            # SQL Server doesn't support SHOW
+            allowed_starts = ['SELECT', 'EXEC sp_', 'EXECUTE sp_']
+        else:
+            # MySQL and PostgreSQL support SHOW, DESCRIBE, etc.
+            allowed_starts = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN']
+        
+        if not any(query_upper.startswith(cmd) for cmd in allowed_starts):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only read-only queries are allowed for {request.database_type}"
+            )
+        
+        # Check for dangerous keywords as standalone SQL commands (not in column names)
+        if query_upper.startswith('SELECT'):
+            dangerous_keywords = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'TRUNCATE']
+            # Use word boundaries to match only complete keywords, not parts of column names
+            import re
+            for keyword in dangerous_keywords:
+                # Match keyword as a separate word (not part of column name like create_date)
+                pattern = r'\b' + keyword + r'\b'
+                if re.search(pattern, query_upper):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Query contains forbidden keyword: {keyword}"
+                    )
+        
+        # Execute query
+        db = DatabaseConnection(request.connection_string, request.database_type)
+        result = db.execute_select(request.sql_query, limit=100)
+        
+        return QueryExecuteResponse(
+            columns=result['columns'],
+            rows=result['rows'],
+            row_count=len(result['rows']),
+            success=True
+        )
+    except Exception as e:
+        return QueryExecuteResponse(
+            columns=[],
+            rows=[],
+            row_count=0,
+            success=False,
+            error=str(e)
+        )
+
+@router.post("/chat/generate-title", response_model=GenerateTitleResponse)
+async def generate_chat_title(request: GenerateTitleRequest):
+    """Generate a smart title for a chat based on the user's first question"""
+    try:
+        # BYOK Mode - Use user's API key or credentials directly
+        if request.ai_provider == 'bedrock':
+            # Bedrock uses AWS credentials instead of API key
+            if not request.bedrock_config:
+                raise HTTPException(status_code=400, detail="AWS credentials required for Bedrock")
+
+            ai_client = AIClient(
+                provider=AIProvider.BEDROCK,
+                bedrock_config={
+                    'access_key': request.bedrock_config.access_key,
+                    'secret_key': request.bedrock_config.secret_key,
+                    'region': request.bedrock_config.region
+                }
+            )
+        else:
+            # Other providers use API key
+            if not request.api_key:
+                raise HTTPException(status_code=400, detail="API key required")
+
+            ai_client = AIClient(
+                provider=AIProvider(request.ai_provider),
+                api_key=request.api_key
+            )
+        
+        # For BYOK mode, generate title using AI
+        prompt = f"""Generate a short, descriptive title (3-5 words max) for a database chat based on this question:
+
+Question: "{request.question}"
+
+Rules:
+- Maximum 5 words
+- No quotes or special characters
+- Descriptive and clear
+- Professional tone
+
+Return ONLY the title, nothing else."""
+
+        # Use the AI client to generate title
+        import httpx
+        
+        if request.ai_provider == 'openai':
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    'https://api.openai.com/v1/chat/completions',
+                    headers={
+                        'Authorization': f'Bearer {request.api_key}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'model': request.ai_model or 'gpt-4o-mini',
+                        'messages': [{'role': 'user', 'content': prompt}],
+                        'max_tokens': 20,
+                        'temperature': 0.7
+                    },
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    title = result['choices'][0]['message']['content'].strip()
+                    return GenerateTitleResponse(title=title, success=True)
+                    
+        elif request.ai_provider == 'claude':
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    'https://api.anthropic.com/v1/messages',
+                    headers={
+                        'x-api-key': request.api_key,
+                        'anthropic-version': '2023-06-01',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'model': request.ai_model or 'claude-3-5-sonnet-latest',
+                        'max_tokens': 20,
+                        'messages': [{'role': 'user', 'content': prompt}]
+                    },
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    title = result['content'][0]['text'].strip()
+                    return GenerateTitleResponse(title=title, success=True)
+                    
+        elif request.ai_provider == 'gemini':
+            model_name = request.ai_model or 'gemini-2.5-flash'
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={request.api_key}',
+                    headers={'Content-Type': 'application/json'},
+                    json={
+                        'contents': [{'parts': [{'text': prompt}]}],
+                        'generationConfig': {
+                            'maxOutputTokens': 20,
+                            'temperature': 0.7
+                        }
+                    },
+                    timeout=10.0
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    title = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                    return GenerateTitleResponse(title=title, success=True)
+
+        elif request.ai_provider == 'bedrock':
+            # Bedrock uses AIClient's chat method for title generation
+            try:
+                result = ai_client.chat(
+                    messages=[{'role': 'user', 'content': prompt}],
+                    model=request.ai_model,
+                    max_tokens=20
+                )
+                title = result.strip()
+                return GenerateTitleResponse(title=title, success=True)
+            except Exception as e:
+                # Fallback on error
+                print(f"Bedrock title generation failed: {str(e)}")
+                words = request.question.split()[:4]
+                title = ' '.join(words).capitalize() if words else 'New Chat'
+                return GenerateTitleResponse(title=title, success=True)
+        
+        # Fallback: Extract first few words from question
+        words = request.question.split()[:4]
+        title = ' '.join(words).capitalize()
+        return GenerateTitleResponse(title=title, success=True)
+        
+    except Exception as e:
+        # Fallback to simple title
+        words = request.question.split()[:4]
+        title = ' '.join(words).capitalize() if words else 'New Chat'
+        return GenerateTitleResponse(title=title, success=True)
+
+
+# ========================================
+# NEW FEATURE: Execution Plan Analysis
+# ========================================
+
+from execution_plan.parser import ExecutionPlanParser
+from execution_plan.analyzer import ExecutionPlanAnalyzer
+from execution_plan.insights import get_ai_insights, generate_summary_for_chat
+from execution_plan.models import ExecutionPlanRequest, ExecutionPlanResponse
+
+
+@router.post("/execution-plan/analyze", response_model=ExecutionPlanResponse)
+async def analyze_execution_plan(
+    request: ExecutionPlanRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Analyze SQL Server execution plan (.sqlplan XML)
+
+    Uses BYOK mode with user's API key or AWS credentials.
+    
+    Requires Pro tier or higher.
+    """
+    try:
+        # Extract JWT token from Authorization header
+        jwt_token = None
+        if authorization and authorization.startswith("Bearer "):
+            jwt_token = authorization.replace("Bearer ", "")
+        
+        # Step 0: Validate with cloud - check tier allows execution plan
+        validation = await validate_usage_with_cloud(jwt_token=jwt_token)
+        
+        if not validation.get("execution_plan_allowed"):
+            tier_display = validation.get("tier_display_name", "Demo")
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "feature_not_allowed",
+                    "message": f"Execution Plan Analysis is not available in the {tier_display} tier. Please upgrade to Pro to access this feature.",
+                    "tier": validation.get("tier", "anonymous"),
+                    "tier_display_name": tier_display,
+                    "feature": "execution_plan",
+                    "upgrade_url": "https://qognix.com/pricing"
+                }
+            )
+        
+        # Step 1: Parse XML
+        parser = ExecutionPlanParser()
+        parsed_plan = parser.parse(request.xml_content)
+
+        # Step 2: Analyze
+        analyzer = ExecutionPlanAnalyzer()
+        analysis = analyzer.analyze(parsed_plan)
+
+        # Get AI insights if provider specified
+        ai_insights = None
+
+        if request.ai_provider:
+            # BYOK Mode - Use user's API key or credentials
+            try:
+                if request.ai_provider == 'bedrock':
+                    # Bedrock uses AWS credentials
+                    if not request.bedrock_config:
+                        raise ValueError("AWS credentials required for Bedrock")
+
+                    ai_client = AIClient(
+                        provider=AIProvider.BEDROCK,
+                        bedrock_config={
+                            'access_key': request.bedrock_config.access_key,
+                            'secret_key': request.bedrock_config.secret_key,
+                            'region': request.bedrock_config.region
+                        }
+                    )
+                else:
+                    # Other providers use API key
+                    if not request.api_key:
+                        raise ValueError("API key required")
+
+                    ai_client = AIClient(
+                        provider=AIProvider(request.ai_provider),
+                        api_key=request.api_key
+                    )
+
+                ai_insights = await get_ai_insights(
+                    ai_client,
+                    analysis,
+                    parsed_plan['statement'],
+                    model=request.ai_model
+                )
+            except Exception as e:
+                # AI insights failed, but continue with analysis
+                print(f"AI insights failed: {str(e)}")
+                ai_insights = f"AI analysis unavailable: {str(e)}"
+
+
+        # Return analysis results
+        return ExecutionPlanResponse(
+            summary=analysis['summary'],
+            operations=analysis['expensive_operations'],
+            bottlenecks=analysis['bottlenecks'],
+            missing_indexes=analysis['missing_indexes'],
+            recommendations=analysis['recommendations'],
+            ai_insights=ai_insights,
+            success=True
+        )
+
+    except ValueError as e:
+        # Invalid XML or not an execution plan
+        return ExecutionPlanResponse(
+            summary=None,
+            operations=[],
+            bottlenecks=[],
+            missing_indexes=[],
+            recommendations=[],
+            success=False,
+            error=f"Invalid execution plan: {str(e)}"
+        )
+    except Exception as e:
+        # Unexpected error
+        return ExecutionPlanResponse(
+            summary=None,
+            operations=[],
+            bottlenecks=[],
+            missing_indexes=[],
+            recommendations=[],
+            success=False,
+            error=f"Analysis failed: {str(e)}"
+        )
+
+
+# Models endpoint
+class ModelsRequest(BaseModel):
+    """Request to fetch available models from AI providers"""
+    providers: List[str]  # List of providers to fetch models from: ['claude', 'openai', 'gemini']
+    api_keys: dict  # Dict mapping provider name to API key for validation
+
+
+class ProviderModels(BaseModel):
+    """Available models for a specific provider"""
+    provider: str
+    models: List[str]
+    default_model: str
+    success: bool
+    error: Optional[str] = None
+
+
+class ModelsResponse(BaseModel):
+    """Response with available models from all providers"""
+    providers: List[ProviderModels]
+    success: bool
+
+
+@router.post("/models/available", response_model=ModelsResponse)
+async def get_available_models(request: ModelsRequest):
+    """
+    Fetch available models from AI provider APIs.
+
+    This endpoint queries each provider's API to get the list of available models.
+    Used on app startup to ensure the latest models are always available.
+    """
+    results = []
+
+    for provider_name in request.providers:
+        try:
+            api_key = request.api_keys.get(provider_name)
+            if not api_key:
+                results.append(ProviderModels(
+                    provider=provider_name,
+                    models=[],
+                    default_model="",
+                    success=False,
+                    error="No API key provided"
+                ))
+                continue
+
+            # Get models from provider
+            if provider_name == "claude":
+                from ai.claude_provider import ClaudeProvider
+                provider = ClaudeProvider(api_key)
+                models = provider.get_available_models()
+                default = provider.default_model
+            elif provider_name == "openai":
+                from ai.openai_provider import OpenAIProvider
+                provider = OpenAIProvider(api_key)
+                models = provider.get_available_models()
+                default = provider.default_model
+            elif provider_name == "gemini":
+                from ai.gemini_provider import GeminiProvider
+                provider = GeminiProvider(api_key)
+                models = provider.get_available_models()
+                default = provider.default_model
+            else:
+                results.append(ProviderModels(
+                    provider=provider_name,
+                    models=[],
+                    default_model="",
+                    success=False,
+                    error=f"Unknown provider: {provider_name}"
+                ))
+                continue
+
+            results.append(ProviderModels(
+                provider=provider_name,
+                models=models,
+                default_model=default,
+                success=True
+            ))
+
+        except Exception as e:
+            results.append(ProviderModels(
+                provider=provider_name,
+                models=[],
+                default_model="",
+                success=False,
+                error=str(e)
+            ))
+
+    return ModelsResponse(
+        providers=results,
+        success=True
+    )
+
+
+# ========================================
+# NEW FEATURE: Stored Procedures - Dynamic Fetching
+# ========================================
+
+class ProceduresListRequest(BaseModel):
+    connection_string: str
+    database_type: str
+
+class ProcedureInfo(BaseModel):
+    procedure_name: str
+    type: str  # 'PROCEDURE' or 'FUNCTION'
+
+class ProceduresListResponse(BaseModel):
+    procedures: List[ProcedureInfo]
+    success: bool
+    error: Optional[str] = None
+
+class ProcedureDefinitionRequest(BaseModel):
+    connection_string: str
+    database_type: str
+    procedure_name: str
+
+class ProcedureDefinitionResponse(BaseModel):
+    procedure_name: str
+    type: str
+    definition: Optional[str] = None
+    parameters: Optional[str] = None
+    success: bool
+    error: Optional[str] = None
+
+
+@router.post("/procedures/list", response_model=ProceduresListResponse)
+async def fetch_procedures_list(request: ProceduresListRequest):
+    """
+    Fetch list of all stored procedures and functions from the database.
+
+    This is a dynamic endpoint - only called when user/AI explicitly requests procedure information.
+    Not included in the initial schema to save tokens.
+    """
+    try:
+        db = DatabaseConnection(request.connection_string, request.database_type)
+        extractor = SchemaExtractor(db)
+
+        # Get the appropriate query based on database type
+        from database.schemas.postgres import POSTGRES_SCHEMA_QUERIES
+        from database.schemas.mysql import MYSQL_SCHEMA_QUERIES
+        from database.schemas.mssql import MSSQL_SCHEMA_QUERIES
+
+        db_type = request.database_type.lower()
+
+        if db_type == 'postgresql':
+            query = POSTGRES_SCHEMA_QUERIES['procedures_list']
+        elif db_type == 'mysql':
+            query = MYSQL_SCHEMA_QUERIES['procedures_list']
+        elif db_type in ['mssql', 'sqlserver']:
+            query = MSSQL_SCHEMA_QUERIES['procedures_list']
+        else:
+            raise ValueError(f"Unsupported database type: {request.database_type}")
+
+        # Execute query
+        result = db.execute_query(query)
+
+        # Format results
+        procedures = []
+        for row in result:
+            procedures.append(ProcedureInfo(
+                procedure_name=row.get('procedure_name') or row.get('PROCEDURE_NAME') or '',
+                type=row.get('type') or row.get('TYPE') or ''
+            ))
+
+        return ProceduresListResponse(
+            procedures=procedures,
+            success=True
+        )
+
+    except Exception as e:
+        return ProceduresListResponse(
+            procedures=[],
+            success=False,
+            error=str(e)
+        )
+
+
+@router.post("/procedures/definition", response_model=ProcedureDefinitionResponse)
+async def fetch_procedure_definition(request: ProcedureDefinitionRequest):
+    """
+    Fetch detailed definition of a specific stored procedure or function.
+
+    This is a dynamic endpoint - only called when user/AI explicitly requests
+    details about a specific procedure.
+    """
+    try:
+        db = DatabaseConnection(request.connection_string, request.database_type)
+
+        # Get the appropriate query based on database type
+        from database.schemas.postgres import POSTGRES_SCHEMA_QUERIES
+        from database.schemas.mysql import MYSQL_SCHEMA_QUERIES
+        from database.schemas.mssql import MSSQL_SCHEMA_QUERIES
+
+        db_type = request.database_type.lower()
+
+        if db_type == 'postgresql':
+            query = POSTGRES_SCHEMA_QUERIES['procedure_definition']
+            # PostgreSQL uses %s placeholders
+            result = db.execute_query(query, params=(request.procedure_name,))
+        elif db_type == 'mysql':
+            query = MYSQL_SCHEMA_QUERIES['procedure_definition']
+            # MySQL uses %s placeholders
+            result = db.execute_query(query, params=(request.procedure_name,))
+        elif db_type in ['mssql', 'sqlserver']:
+            query = MSSQL_SCHEMA_QUERIES['procedure_definition']
+            # SQL Server uses @parameter_name placeholders
+            # Need to replace the placeholder with actual value for this simple case
+            query = query.replace('@procedure_name', f"'{request.procedure_name}'")
+            result = db.execute_query(query)
+        else:
+            raise ValueError(f"Unsupported database type: {request.database_type}")
+
+        if not result or len(result) == 0:
+            return ProcedureDefinitionResponse(
+                procedure_name=request.procedure_name,
+                type='',
+                success=False,
+                error=f"Procedure '{request.procedure_name}' not found"
+            )
+
+        # Get first row
+        row = result[0]
+
+        return ProcedureDefinitionResponse(
+            procedure_name=row.get('procedure_name') or row.get('PROCEDURE_NAME') or request.procedure_name,
+            type=row.get('type') or row.get('TYPE') or '',
+            definition=row.get('definition') or row.get('DEFINITION') or row.get('routine_definition') or row.get('ROUTINE_DEFINITION'),
+            parameters=row.get('parameters') or row.get('PARAMETERS'),
+            success=True
+        )
+
+    except Exception as e:
+        return ProcedureDefinitionResponse(
+            procedure_name=request.procedure_name,
+            type='',
+            success=False,
+            error=str(e)
+        )
+
+# Database Info Request/Response Models
+class DatabaseInfoRequest(BaseModel):
+    connection_string: str
+    database_type: str
+
+class DatabaseInfoResponse(BaseModel):
+    database_name: Optional[str] = None
+    database_size: Optional[str] = None
+    creation_date: Optional[str] = None
+    collation: Optional[str] = None
+    owner: Optional[str] = None
+    status: Optional[str] = None
+    recovery_model: Optional[str] = None
+    compatibility_level: Optional[str] = None
+    success: bool
+    error: Optional[str] = None
+
+
+@router.post("/database/info", response_model=DatabaseInfoResponse)
+async def get_database_info(request: DatabaseInfoRequest):
+    """Get database properties and metadata - independent endpoint that doesn't affect chat"""
+    try:
+        db = DatabaseConnection(request.connection_string, request.database_type)
+
+        if not db.test_connection():
+            return DatabaseInfoResponse(
+                success=False,
+                error="Failed to connect to database"
+            )
+
+        db_type = request.database_type.lower()
+        info = {}
+
+        if db_type == 'postgresql':
+            # PostgreSQL database info queries
+            queries = {
+                'database_name': "SELECT current_database() as db_name",
+                'database_size': "SELECT pg_size_pretty(pg_database_size(current_database())) as size",
+                'creation_date': """
+                    SELECT (pg_stat_file('base/'||oid ||'/PG_VERSION')).modification as creation_date
+                    FROM pg_database WHERE datname = current_database()
+                """,
+                'collation': "SELECT datcollate as collation FROM pg_database WHERE datname = current_database()",
+                'owner': "SELECT pg_catalog.pg_get_userbyid(datdba) as owner FROM pg_database WHERE datname = current_database()"
+            }
+
+            for key, query in queries.items():
+                try:
+                    result = db.execute_query(query)
+                    if result and len(result) > 0:
+                        info[key] = str(result[0].get(key.replace('_', ''))) if key.replace('_', '') in result[0] else str(list(result[0].values())[0])
+                except:
+                    info[key] = "N/A"
+
+        elif db_type == 'mysql':
+            # MySQL database info queries
+            db_name_result = db.execute_query("SELECT DATABASE() as db_name")
+            db_name = db_name_result[0]['db_name'] if db_name_result else None
+
+            if db_name:
+                queries = {
+                    'database_name': f"SELECT '{db_name}' as db_name",
+                    'database_size': f"""
+                        SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) as size_mb
+                        FROM information_schema.tables
+                        WHERE table_schema = '{db_name}'
+                    """,
+                    'creation_date': f"""
+                        SELECT create_time as creation_date
+                        FROM information_schema.tables
+                        WHERE table_schema = '{db_name}'
+                        ORDER BY create_time ASC LIMIT 1
+                    """,
+                    'collation': f"""
+                        SELECT default_collation_name as collation
+                        FROM information_schema.schemata
+                        WHERE schema_name = '{db_name}'
+                    """
+                }
+
+                for key, query in queries.items():
+                    try:
+                        result = db.execute_query(query)
+                        if result and len(result) > 0:
+                            value = list(result[0].values())[0]
+                            if key == 'database_size' and value:
+                                info[key] = f"{value} MB"
+                            else:
+                                info[key] = str(value) if value else "N/A"
+                    except:
+                        info[key] = "N/A"
+
+        elif db_type in ['mssql', 'sqlserver']:
+            # SQL Server database info queries
+            queries = {
+                'database_name': "SELECT DB_NAME() as database_name",
+                'database_size': """
+                    SELECT
+                        CAST(SUM(size) * 8.0 / 1024 AS DECIMAL(10,2)) as size_mb
+                    FROM sys.master_files
+                    WHERE database_id = DB_ID()
+                """,
+                'creation_date': "SELECT create_date FROM sys.databases WHERE name = DB_NAME()",
+                'collation': "SELECT collation_name FROM sys.databases WHERE name = DB_NAME()",
+                'owner': "SELECT SUSER_SNAME(owner_sid) as owner FROM sys.databases WHERE name = DB_NAME()",
+                'recovery_model': "SELECT recovery_model_desc FROM sys.databases WHERE name = DB_NAME()",
+                'compatibility_level': "SELECT compatibility_level FROM sys.databases WHERE name = DB_NAME()",
+                'status': "SELECT state_desc FROM sys.databases WHERE name = DB_NAME()"
+            }
+
+            for key, query in queries.items():
+                try:
+                    result = db.execute_query(query)
+                    if result and len(result) > 0:
+                        value = list(result[0].values())[0]
+                        if key == 'database_size' and value:
+                            info[key] = f"{value} MB"
+                        else:
+                            info[key] = str(value) if value else "N/A"
+                except:
+                    info[key] = "N/A"
+
+        return DatabaseInfoResponse(
+            database_name=info.get('database_name'),
+            database_size=info.get('database_size'),
+            creation_date=info.get('creation_date'),
+            collation=info.get('collation'),
+            owner=info.get('owner'),
+            status=info.get('status'),
+            recovery_model=info.get('recovery_model'),
+            compatibility_level=info.get('compatibility_level'),
+            success=True
+        )
+
+    except Exception as e:
+        # Check if this is a permission error
+        if is_permission_error(str(e), request.database_type):
+            permission_info = get_permission_error_response('database_info', request.database_type)
+            error_message = f"{permission_info['message']}\n\n{permission_info['grant_script']}"
+            return DatabaseInfoResponse(
+                success=False,
+                error=error_message
+            )
+
+        return DatabaseInfoResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+# ========================================
+# Tier Status Endpoint (Cloud-Only)
+# ========================================
+
+class TierStatusResponse(BaseModel):
+    """Current tier and usage status from cloud"""
+    tier: str
+    tier_display_name: str
+    messages_used: int
+    messages_limit: int
+    messages_remaining: int
+    connections_limit: int
+    execution_plan_allowed: bool
+    is_lifetime: bool
+    success: bool
+    error: Optional[str] = None
+
+
+@router.get("/tier/status", response_model=TierStatusResponse)
+async def get_tier_status(authorization: Optional[str] = Header(None)):
+    """
+    Get current tier and usage status.
+
+    Simplified: Returns "not logged in" if no JWT token
+    """
+    try:
+        # Extract JWT token from Authorization header
+        jwt_token = None
+        if authorization and authorization.startswith("Bearer "):
+            jwt_token = authorization.replace("Bearer ", "")
+
+        if not jwt_token:
+            # User not logged in - return success=False so frontend doesn't update user data
+            return TierStatusResponse(
+                tier="none",
+                tier_display_name="Not signed in",
+                messages_used=0,
+                messages_limit=0,
+                messages_remaining=0,
+                connections_limit=0,
+                execution_plan_allowed=False,
+                is_lifetime=False,
+                success=False,  # Critical: prevents frontend from updating user with default values
+                error="Not authenticated"
+            )
+
+        # User is logged in - check with cloud
+        cloud = get_cloud_client()
+        result = await cloud.validate_user_usage(jwt_token=jwt_token)
+
+        if result.get("offline"):
+            return TierStatusResponse(
+                tier="unknown",
+                tier_display_name="Offline",
+                messages_used=0,
+                messages_limit=0,
+                messages_remaining=0,
+                connections_limit=0,
+                execution_plan_allowed=False,
+                is_lifetime=False,
+                success=False,
+                error="Unable to connect to Qognix servers"
+            )
+
+        # Validate we have required data from cloud before returning success=True
+        if not result.get("tier") or not result.get("tier_display_name"):
+            return TierStatusResponse(
+                tier="unknown",
+                tier_display_name="Invalid response",
+                messages_used=0,
+                messages_limit=0,
+                messages_remaining=0,
+                connections_limit=0,
+                execution_plan_allowed=False,
+                is_lifetime=False,
+                success=False,
+                error="Invalid cloud response"
+            )
+
+        return TierStatusResponse(
+            tier=result.get("tier"),
+            tier_display_name=result.get("tier_display_name"),
+            messages_used=result.get("messages_used", 0),
+            messages_limit=result.get("messages_limit", 0),
+            messages_remaining=result.get("messages_remaining", 0),
+            connections_limit=result.get("connections_limit", 0),
+            execution_plan_allowed=result.get("execution_plan_allowed", False),
+            is_lifetime=False,
+            success=True
+        )
+
+    except Exception as e:
+        return TierStatusResponse(
+            tier="unknown",
+            tier_display_name="Error",
+            messages_used=0,
+            messages_limit=0,
+            messages_remaining=0,
+            connections_limit=0,
+            execution_plan_allowed=False,
+            is_lifetime=False,
+            success=False,
+            error=str(e)
+        )
+
+
+# ============================================
+# Authentication Proxy Endpoint
+# ============================================
+
+@router.get("/auth/me")
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """
+    Proxy endpoint to get current user info from cloud backend.
+
+    This endpoint forwards the JWT token to the cloud server
+    and returns the user's profile with subscription info.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required"
+        )
+
+    try:
+        # Extract JWT token
+        jwt_token = authorization.replace("Bearer ", "")
+
+        # Forward request to cloud backend
+        cloud = get_cloud_client()
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{cloud.base_url}/api/auth/me",
+                headers={"Authorization": f"Bearer {jwt_token}"}
+            )
+
+            if response.status_code == 401:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or expired token"
+                )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Cloud server error: {response.text}"
+                )
+
+            # Return the user data from cloud
+            return response.json()
+
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to connect to cloud server"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching user info: {str(e)}"
+        )
+
+
+# ============================================
+# Analytics Proxy Endpoint
+# ============================================
+
+class AnalyticsEventRequest(BaseModel):
+    event: str
+    metadata: Optional[dict] = None
+
+@router.post("/analytics/event")
+async def track_analytics_event(
+    body: AnalyticsEventRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Proxy analytics event to cloud. Fire-and-forget, never fails."""
+    import sys
+    jwt_token = None
+    if authorization and authorization.startswith("Bearer "):
+        jwt_token = authorization.replace("Bearer ", "")
+
+    cloud = get_cloud_client()
+    await cloud.track_analytics_event(
+        event=body.event,
+        app_version="0.1.9",
+        platform=sys.platform,
+        jwt_token=jwt_token,
+        metadata=body.metadata,
+    )
+    return {"ok": True}
