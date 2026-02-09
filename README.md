@@ -1,8 +1,8 @@
 # SQLingo - Free AI-Powered Database Assistant
 
-> 🚀 **Free Desktop Application** - Natural language queries for your databases using your own AI API keys
+> 🚀 **Free Desktop Application** - Natural language queries for your databases using your own AI API keys.
 
-A completely free desktop application that lets you interact with your databases using natural language. All AI calls are made directly from your machine using your own API keys (BYOK - Bring Your Own Keys). No subscriptions, no limits, no cloud dependencies.
+A completely free desktop application that lets you interact with your databases using natural language. All AI calls are made directly from your machine using your own API keys (BYOK - Bring Your Own Keys). **No subscriptions, no limits, no cloud dependencies.**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -15,7 +15,7 @@ A completely free desktop application that lets you interact with your databases
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                         YOUR MACHINE (100% LOCAL)                        │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │                    DESKTOP APPLICATION                             │  │
+│  │                    DESKTOP APPLICATION (SQLingo)                   │  │
 │  │                                                                    │  │
 │  │   ┌─────────────────────┐      ┌─────────────────────────────┐    │  │
 │  │   │   Electron + React  │      │    Python Backend (Local)   │    │  │
@@ -27,15 +27,15 @@ A completely free desktop application that lets you interact with your databases
 │  │                                └──────────────┬──────────────┘    │  │
 │  └───────────────────────────────────────────────│───────────────────┘  │
 │                                                  │                       │
-│                                      Direct API Calls                    │
-│                                      (Your API Keys)                     │
+│                                      Direct AI API Calls                 │
+│                                      (Your Own API Keys)                 │
 │                                                  │                       │
 │                                                  ▼                       │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │                      AI PROVIDERS (EXTERNAL)                       │  │
 │  │   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────────┐  │  │
 │  │   │ OpenAI  │  │ Claude  │  │ Gemini  │  │ AWS Bedrock         │  │  │
-│  │   │ GPT-4o  │  │ Sonnet  │  │ Flash   │  │ (Your AWS Creds)    │  │  │
+│  │   │ GPT-4o  │  │ Sonnet  │  │ Flash   │  │ (Direct Access)     │  │  │
 │  │   └─────────┘  └─────────┘  └─────────┘  └─────────────────────┘  │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 │                                                  │                       │
@@ -50,83 +50,49 @@ A completely free desktop application that lets you interact with your databases
 ```
 
 ### Key Architecture Points:
-- **🔐 100% Local** - Everything runs on your machine
-- **🆓 Completely Free** - No subscriptions, no usage limits
-- **🔑 BYOK (Bring Your Own Keys)** - Use your own AI API keys
-- **🛡️ Your Data Stays Local** - Database connections and queries never leave your machine
-- **💾 Local Storage** - All chat history and settings stored locally with SQLite
+- **🔐 100% Local** - Everything runs on your machine.
+- **🆓 Completely Free** - No subscriptions, no usage limits, no trials.
+- **🔑 BYOK (Bring Your Own Keys)** - Use your own AI provider keys.
+- **🛡️ Privacy First** - Your database data and AI queries never pass through "our" servers.
+- **💾 Local Persistence** - History and settings are stored in local SQLite files.
 
 ---
 
 ## ✨ Features
 
-### 🤖 AI Providers (BYOK - Your Own Keys)
-| Provider | Models | Required |
-|----------|--------|----------|
-| **OpenAI** | GPT-4o, GPT-4o-mini | API Key |
-| **Claude** | Claude 3.5 Sonnet | API Key |
-| **Gemini** | Gemini 2.0 Flash | API Key |
-| **AWS Bedrock** | Claude via AWS | AWS Credentials |
+### 🤖 AI Providers (BYOK)
+- **OpenAI**: GPT-4o, GPT-4o-mini
+- **Anthropic**: Claude 3.5 Sonnet
+- **Google**: Gemini 2.0 Flash
+- **AWS Bedrock**: Claude models via direct AWS integration
 
 ### 🗄️ Database Support
-- **PostgreSQL** - Full support with connection pooling
-- **MySQL** - Complete compatibility  
-- **SQL Server** - Native support via pymssql
+- **PostgreSQL**, **MySQL**, **SQL Server**
+- Schema awareness (Tables, Views, PKs, FKs, Indexes, Enums)
 
-### 🎨 Desktop Features
-- **Natural Language Queries** - Ask in plain English, get SQL
-- **Chat Sidebar** - Manage multiple conversations
-- **Schema Awareness** - Full understanding of PKs, FKs, Indexes, Views, Enums
-- **Execution Plan Analysis** - Drag & drop `.sqlplan` files (Pro tier)
-- **Floating Window** - Always-on-top mode
-- **Dark/Light Theme** - Modern UI
-- **Query Safety** - Prevents destructive operations
-
-### � Security
-- **Local API Keys** - Encrypted with Fernet AES
-- **No Data Upload** - Your database data never leaves your machine
-- **JWT Authentication** - Secure session management
+### 🎨 Desktop Experience
+- **Natural Language to SQL**: Talk to your data.
+- **Floating Window**: Always-on-top mode for quick access.
+- **Execution Plan Analysis**: Analyze query performance visually.
+- **Modern UI**: Dark/Light mode support.
 
 ---
 
-## �📁 Project Structure
+## 📁 Project Structure
 
 ```
-qognix-desktop-only/
+sqlingo/
 ├── desktop/                      # 🖥️ DESKTOP APPLICATION
 │   ├── frontend/                 # Electron + React
 │   │   ├── electron/             # Main process & preload
-│   │   ├── src/                  # React components
-│   │   │   ├── components/       # UI components
-│   │   │   ├── stores/           # Zustand state (auth, chat, etc.)
-│   │   │   └── utils/            # Helpers
+│   │   ├── src/                  # UI (Chat, Settings, Connections)
 │   │   └── package.json
 │   │
 │   └── backend/                  # Python FastAPI (LOCAL)
-│       ├── ai/                   # AI providers (OpenAI, Claude, Gemini, Bedrock)
-│       │   ├── client.py         # Unified AI client
-│       │   ├── openai_provider.py
-│       │   ├── claude_provider.py
-│       │   ├── gemini_provider.py
-│       │   └── bedrock_provider.py
-│       ├── database/             # Database connectors
-│       │   ├── connection.py     # Connection handler
-│       │   └── schema_extractor.py
-│       ├── api/                  # API routes
-│       │   └── routes.py         # /chat, /schema, /execute
-│       ├── cloud_client.py       # Client for auth/usage validation
-│       ├── main.py               # FastAPI entry
-│       └── requirements.txt
-│
-├── server/                       # ☁️ CLOUD SERVER (Auth & Subscriptions only)
-│   ├── frontend/                 # React portal (Vite)
-│   │   └── src/                  # Login, billing, dashboard pages
-│   └── backend/                  # FastAPI
-│       ├── api/
-│       │   ├── auth.py           # Register, login, JWT
-│       │   ├── subscriptions.py  # Tier management, Stripe
-│       │   └── usage.py          # Usage tracking/validation
-│       └── database/             # PostgreSQL (cloud DB)
+│       ├── ai/                   # AI provider integrations
+│       ├── database/             # Connectors & Schema extraction
+│       ├── api/                  # Local endpoints
+│       └── main.py               # Local server entry
 │
 ├── docs/                         # Documentation
 └── scripts/                      # Build & utility scripts
@@ -140,74 +106,31 @@ qognix-desktop-only/
 - **Node.js** 18+
 - **Python** 3.10+
 
-### Desktop App Setup
+### Setup
 
-**1. Backend:**
-```bash
-cd desktop/backend
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp env.example .env
-# Edit .env - add your API keys (OPENAI_API_KEY, etc.)
-```
+1. **Install Dependencies:**
+   ```bash
+   # Backend
+   cd desktop/backend
+   python -m venv venv
+   source venv/bin/activate  # Windows: venv\Scripts\activate
+   pip install -r requirements.txt
 
-**2. Frontend:**
-```bash
-cd desktop/frontend
-npm install
-```
+   # Frontend
+   cd ../frontend
+   npm install
+   ```
 
-**3. Run:**
-```bash
-# Terminal 1 - Backend
-cd desktop/backend && source venv/bin/activate && python main.py
-
-# Terminal 2 - Frontend
-cd desktop/frontend && npm run electron:dev
-```
+2. **Run in Development:**
+   ```bash
+   # Start the app
+   cd desktop/frontend
+   npm run electron:dev
+   ```
 
 ---
 
-## 🛠️ Technology Stack
-
-### Desktop App
-| Component | Technology |
-|-----------|------------|
-| **Desktop Framework** | Electron |
-| **UI Library** | React 18 + TypeScript |
-| **Styling** | Styled Components |
-| **State Management** | Zustand |
-| **Build Tool** | Vite |
-| **Backend Runtime** | Python 3.10+ |
-| **API Framework** | FastAPI |
-| **AI SDKs** | anthropic, openai, google-generativeai, boto3 |
-| **Database Drivers** | psycopg2, PyMySQL, pymssql |
-
-### Cloud Server
-| Component | Technology |
-|-----------|------------|
-| **API Framework** | FastAPI |
-| **Database** | PostgreSQL |
-| **Payments** | Stripe |
-| **Portal** | React + Vite |
-
----
-
-## 💰 Subscription Tiers
-
-All tiers use **BYOK (Bring Your Own Keys)** - you provide your own AI API keys.
-
-| Feature | Free | Pro | Enterprise |
-|---------|------|-----|-----------|
-| Messages/Month | 25 | 500 | Unlimited |
-| Database Connections | 1 | Unlimited | Unlimited |
-| Execution Plan Analysis | ❌ | ✅ | ✅ |
-| Price | $0 | $29/mo | Contact Us |
-
----
-
-## 📦 Building for Production
+## 📦 Building Distributions
 
 ```bash
 cd desktop/frontend
@@ -229,16 +152,15 @@ npm run electron:build:linux
 | Document | Description |
 |----------|-------------|
 | [docs/QUICK_START.md](docs/QUICK_START.md) | Getting started guide |
-| [docs/AUTH_IMPLEMENTATION.md](docs/AUTH_IMPLEMENTATION.md) | Authentication flow |
-| [docs/EXECUTION_PLAN_FEATURE.md](docs/EXECUTION_PLAN_FEATURE.md) | SQL execution plan analysis |
-| [docs/BUILD_GUIDE.md](docs/BUILD_GUIDE.md) | Building installers |
+| [docs/EXECUTION_PLAN_FEATURE.md](docs/EXECUTION_PLAN_FEATURE.md) | Query performance analysis |
+| [docs/BUILD_GUIDE.md](docs/BUILD_GUIDE.md) | Packaging instructions |
 
 ---
 
 ## 📝 License
 
-Proprietary - All rights reserved.
+Distributed under the MIT License. See `LICENSE` for more information.
 
 ---
 
-**Made with ❤️ for developers who love databases**
+**Made for developers who want a powerful, private, and free database assistant.**

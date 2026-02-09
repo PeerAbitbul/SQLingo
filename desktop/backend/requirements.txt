@@ -1,4 +1,4 @@
-# Qognix Desktop Backend Dependencies
+# SQLingo Desktop Backend Dependencies
 # Python 3.10+
 
 # ===========================================
@@ -33,7 +33,6 @@ httpx>=0.25.0
 # Security & Encryption
 # ===========================================
 cryptography>=41.0.7       # For connection string encryption
-pyjwt>=2.8.0               # JWT token handling
 
 # ===========================================
 # Data Validation

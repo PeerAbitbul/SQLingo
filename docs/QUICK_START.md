@@ -1,148 +1,93 @@
-# Qognix - Complete System Startup Guide
+# SQLingo - Quick Start Guide
 
-## 🚀 Quick Start - All Components
+This guide will help you set up and run the SQLingo desktop application for development.
 
-The system has **4 components** that need to run:
+## 🚀 Development Setup
 
-| Component | Port | Purpose |
-|-----------|------|---------|
-| Server Backend | 8001 | Cloud API (auth, subscriptions, usage) |
-| Portal Frontend | 3000 | Web portal (billing, dashboard) |
-| Desktop Backend | 39847 | Local API (AI, connections) |
-| Desktop Frontend | - | Electron app |
+The system consists of **two parts** that run on your machine:
+1. **Desktop Backend** (Python/FastAPI) - Handles AI logic and database connections.
+2. **Desktop Frontend** (Electron/React) - The user interface.
+
+### Prerequisites
+- **Node.js** 18+
+- **Python** 3.10+
 
 ---
 
-## Step 1: Start Server Backend (Cloud API)
+## Step 1: Start Desktop Backend
+
+The backend is responsible for all AI interactions and database queries. It uses a local server on port `39847`.
 
 **Terminal 1:**
 ```bash
-cd server/backend
-source venv/bin/activate
-python main.py
-```
-
-**Expected:**
-```
-INFO:     Uvicorn running on http://127.0.0.1:8001
-```
-
----
-
-## Step 2: Start Portal Frontend (Web Dashboard)
-
-**Terminal 2:**
-```bash
-cd server/frontend
-npm run dev
-```
-
-**Expected:**
-```
-VITE ready in xxx ms
-➜  Local:   http://localhost:3000/
-```
-
----
-
-## Step 3: Start Desktop Backend (Local AI API)
-
-**Terminal 3:**
-```bash
 cd desktop/backend
-source venv/bin/activate
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
 python main.py
 ```
 
-**Expected:**
+**Expected Output:**
 ```
-[OK] Using fixed port: 39847
+[INFO] SQLingo Desktop starting...
 [START] Starting backend server on http://127.0.0.1:39847
 ```
 
 ---
 
-## Step 4: Start Desktop App (Electron)
+## Step 2: Start Desktop App (Frontend)
 
-**Terminal 4:**
+The frontend is the Electron shell that provides the UI.
+
+**Terminal 2:**
 ```bash
 cd desktop/frontend
+npm install
 npm run electron:dev
 ```
 
-**Expected:** Qognix desktop app opens
+**Expected:** The SQLingo desktop application opens.
 
 ---
 
-## 🔗 URLs When Running
+## 🔑 AI Provider Configuration
 
-| Service | URL |
-|---------|-----|
-| Portal | http://localhost:3000 |
-| Server API | http://127.0.0.1:8001/api |
-| Desktop API | http://127.0.0.1:39847/api |
-| API Docs | http://127.0.0.1:8001/docs |
+SQLingo is **BYOK (Bring Your Own Key)**. You need to provide your own API keys for the AI providers you want to use.
 
----
+1. Open the **Settings** menu in the app.
+2. Enter your API keys for:
+   - OpenAI (GPT-4)
+   - Anthropic (Claude)
+   - Google (Gemini)
+   - AWS Bedrock (Credentials)
 
-## 📋 Startup Order (Important!)
-
-1. **Server Backend** - Must start first (provides auth)
-2. **Portal Frontend** - Optional (only if you need web dashboard)
-3. **Desktop Backend** - Before desktop app
-4. **Desktop App** - Last
+All keys are stored **locally and encrypted** on your machine.
 
 ---
 
 ## 🛑 Common Issues
 
 ### Port Already in Use
+If port `39847` or `5173` is occupied:
 ```bash
-# Find and kill process on port
-lsof -i :39847  # or :8001
+# Find and kill process on port (macOS/Linux)
+lsof -i :39847
 kill -9 <PID>
 ```
 
-### PostgreSQL Not Running
-```bash
-# Check if Docker Postgres is running
-docker ps | grep postgres
-# If not running:
-docker start postgres16
-```
+### Database Drivers
+Ensure you have the necessary drivers installed for your database type (e.g., `pymssql` for SQL Server).
 
 ---
 
 ## 💡 Development Tips
 
-### Run Only Desktop (BYOK mode - no server needed)
-If you only want to use BYOK mode without authentication:
+### Run Both Concurrently (macOS/Linux)
+You can use the provided startup script:
 ```bash
-# Terminal 1
-cd desktop/backend && source venv/bin/activate && python main.py
-
-# Terminal 2
-cd desktop/frontend && npm run electron:dev
+./scripts/start-dev.sh
 ```
-
-### Run Full System (with portal)
-Run all 4 terminals as described above.
 
 ---
 
-## 🔐 Environment Variables
-
-Make sure these are set:
-
-**server/backend/.env:**
-```
-DATABASE_URL=postgresql://peer@localhost/qognix_cloud
-JWT_SECRET=your-secret-key
-STRIPE_SECRET_KEY=sk_test_xxx
-```
-
-**desktop/backend/.env:**
-```
-DEV_MODE=true
-CLOUD_API_URL=http://127.0.0.1:8001
-```
+**Happy Querying!**
