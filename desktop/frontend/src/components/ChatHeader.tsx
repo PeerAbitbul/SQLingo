@@ -161,7 +161,7 @@ export const ChatHeader = ({
         </IconButton>
         <LogoContainer>
           <IconWrapper>
-            <LogoIcon src="/SQLingoICON_withoutbackround.png" alt="Icon" />
+            <LogoIcon src="SQLingoICON_withoutbackround.png" alt="Icon" />
           </IconWrapper>
           <LogoText>
             <span className="sql">SQL</span>
