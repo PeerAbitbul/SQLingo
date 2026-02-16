@@ -1,0 +1,99 @@
+name: Build & Release SQLingo
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # ==================================================
+  # Step 1: Build Python backend with PyInstaller
+  # ==================================================
+  build-backend:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Python dependencies
+        working-directory: desktop/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build backend with PyInstaller
+        working-directory: desktop/backend
+        run: |
+          pyinstaller db-chat-backend.spec --clean
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.platform }}
+          path: desktop/backend/dist/db-chat-backend*
+          retention-days: 1
+
+  # ==================================================
+  # Step 2: Build Electron app and publish to GitHub Releases
+  # ==================================================
+  build-electron:
+    needs: build-backend
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            electron_args: --mac
+          - os: windows-latest
+            platform: win
+            electron_args: --win
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-${{ matrix.platform }}
+          path: desktop/frontend/resources/
+
+      - name: Make backend executable (Mac/Linux)
+        if: matrix.platform != 'win'
+        run: chmod +x desktop/frontend/resources/db-chat-backend
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install Node dependencies
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: Build and Publish Electron App
+        working-directory: desktop/frontend
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npm run build && npx electron-builder ${{ matrix.electron_args }} --publish always

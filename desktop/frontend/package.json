@@ -134,7 +134,7 @@
     "publish": {
       "provider": "github",
       "owner": "PeerAbitbul",
-      "repo": "sqlingo-desktop"
+      "repo": "SQLingo"
     }
   }
 }
