@@ -1,6 +1,6 @@
 {
   "name": "db-chat-desktop",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "AI-powered database assistant with natural language SQL generation",
   "author": {
     "name": "SQLingo",
