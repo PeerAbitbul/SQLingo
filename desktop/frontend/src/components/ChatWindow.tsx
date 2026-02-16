@@ -1,5 +1,5 @@
 import styled from 'styled-components';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatStore } from '../stores/chatStore';
 import { useConnectionStore } from '../stores/connectionStore';

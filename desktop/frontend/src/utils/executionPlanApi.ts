@@ -63,6 +63,14 @@ export const analyzeExecutionPlan = async (
 ): Promise<ExecutionPlanAnalysis> => {
   const apiBaseUrl = await getBackendUrl();
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${apiBaseUrl}/execution-plan/analyze`, {
     method: 'POST',
     headers,
