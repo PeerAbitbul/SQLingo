@@ -385,7 +385,7 @@ function createWindow() {
     minWidth: 400,
     minHeight: 500,
     frame: false, // No default frame (custom titlebar)
-    icon: path.join(__dirname, '..', 'public', 'SQLingoICON.png'),
+    icon: path.join(__dirname, '..', 'public', 'SQLingoICON_withoutbackround.png'),
     alwaysOnTop: settings.alwaysOnTop !== false, // Default to true
     transparent: false,
     resizable: true,
