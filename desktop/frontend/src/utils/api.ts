@@ -47,6 +47,7 @@ export interface ChatRequest {
   ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock';
   ai_model?: string;  // Optional: specific model to use
   api_key?: string;  // For BYOK mode (not used for bedrock)
+  auth_mode?: 'api_key' | 'access_token';  // Authentication mode
   bedrock_config?: BedrockConfig;  // For Bedrock BYOK mode
   mode?: 'byok';  // Always BYOK mode
   conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>;  // Chat history for context
@@ -79,6 +80,7 @@ export interface GenerateTitleRequest {
   ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock';
   ai_model?: string;  // Optional: specific model to use
   api_key?: string;  // For BYOK mode (not used for bedrock)
+  auth_mode?: 'api_key' | 'access_token';  // Authentication mode
   bedrock_config?: BedrockConfig;  // For Bedrock BYOK mode
   mode?: 'byok';  // Always BYOK mode
 }
@@ -89,47 +91,8 @@ export interface GenerateTitleResponse {
   error?: string;
 }
 
-export interface ModelInfo {
-  id: string;
-  name: string;
-  description: string;
-  provider: string;
-  pricing?: {
-    input: number;
-    output: number;
-  };
-}
 
-export interface ModelsResponse {
-  models: ModelInfo[];
-  success: boolean;
-  error?: string;
-}
 
-export interface AllModelsResponse {
-  claude: ModelInfo[];
-  openai: ModelInfo[];
-  gemini: ModelInfo[];
-  success: boolean;
-}
-
-export interface ProviderModels {
-  provider: string;
-  models: string[];
-  default_model: string;
-  success: boolean;
-  error?: string;
-}
-
-export interface AvailableModelsRequest {
-  providers: string[];
-  api_keys: Record<string, string>;
-}
-
-export interface AvailableModelsResponse {
-  providers: ProviderModels[];
-  success: boolean;
-}
 
 
 
@@ -225,36 +188,6 @@ class APIClient {
     return response.json();
   }
 
-  async getClaudeModels(): Promise<ModelsResponse> {
-    return this.request<ModelsResponse>('/models/claude', {
-      method: 'GET',
-    });
-  }
-
-  async getOpenAIModels(): Promise<ModelsResponse> {
-    return this.request<ModelsResponse>('/models/openai', {
-      method: 'GET',
-    });
-  }
-
-  async getGeminiModels(): Promise<ModelsResponse> {
-    return this.request<ModelsResponse>('/models/gemini', {
-      method: 'GET',
-    });
-  }
-
-  async getAllModels(): Promise<AllModelsResponse> {
-    return this.request<AllModelsResponse>('/models/all', {
-      method: 'GET',
-    });
-  }
-
-  async getAvailableModels(data: AvailableModelsRequest): Promise<AvailableModelsResponse> {
-    return this.request<AvailableModelsResponse>('/models/available', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
 }
 
 export const apiClient = new APIClient();

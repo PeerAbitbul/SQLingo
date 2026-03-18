@@ -322,9 +322,10 @@ export const ChatWindow = () => {
       // BYOK mode only - no managed mode
       const mode = 'byok';
 
-      // Get API key for selected provider
+      // Get API key and auth mode for selected provider
       const apiKey = apiKeyStore.getKeyForProvider(defaultProvider);
       const defaultModel = apiKeyStore.getModelForProvider(defaultProvider);
+      const authMode = apiKeyStore.getAuthModeForProvider(defaultProvider);
 
       logDebug('Analyzing execution plan', {
         mode,
@@ -340,7 +341,10 @@ export const ChatWindow = () => {
         mode,
         defaultProvider,
         defaultModel,
-        apiKey
+        apiKey,
+        undefined, // token
+        undefined, // bedrockConfig
+        authMode
       );
 
       logDebug('Analysis result received', {

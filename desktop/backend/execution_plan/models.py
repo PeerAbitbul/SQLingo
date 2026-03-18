@@ -18,6 +18,7 @@ class ExecutionPlanRequest(BaseModel):
     ai_provider: Optional[str] = None  # 'claude', 'openai', 'gemini', 'bedrock'
     ai_model: Optional[str] = None
     api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
     bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
     mode: str = "byok"  # 'byok' or 'managed'
     token: Optional[str] = None

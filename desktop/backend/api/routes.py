@@ -55,6 +55,7 @@ class ChatRequest(BaseModel):
     ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock'
     ai_model: Optional[str] = None  # Optional: specific model to use
     api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
     bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
     conversation_history: Optional[List[ConversationMessage]] = None  # Chat history for context
 
@@ -75,6 +76,7 @@ class GenerateTitleRequest(BaseModel):
     ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock'
     ai_model: Optional[str] = None  # Optional: specific model to use
     api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
     bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
 
 
@@ -166,13 +168,14 @@ async def generate_sql(request: ChatRequest):
                 }
             )
         else:
-            # Other providers use API key
+            # Other providers use API key or access token
             if not request.api_key:
-                raise HTTPException(status_code=400, detail="API key required")
+                raise HTTPException(status_code=400, detail="API key or access token required")
 
             ai_client = AIClient(
                 provider=AIProvider(request.ai_provider),
-                api_key=request.api_key
+                api_key=request.api_key,
+                auth_mode=request.auth_mode or 'api_key'
             )
 
         # Convert conversation history to dict format
@@ -418,15 +421,16 @@ async def generate_chat_title(request: GenerateTitleRequest):
                 }
             )
         else:
-            # Other providers use API key
+            # Other providers use API key or access token
             if not request.api_key:
-                raise HTTPException(status_code=400, detail="API key required")
+                raise HTTPException(status_code=400, detail="API key or access token required")
 
             ai_client = AIClient(
                 provider=AIProvider(request.ai_provider),
-                api_key=request.api_key
+                api_key=request.api_key,
+                auth_mode=request.auth_mode or 'api_key'
             )
-        
+
         # For BYOK mode, generate title using AI
         prompt = f"""Generate a short, descriptive title (3-5 words max) for a database chat based on this question:
 
@@ -467,13 +471,22 @@ Return ONLY the title, nothing else."""
                     
         elif request.ai_provider == 'claude':
             async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    'https://api.anthropic.com/v1/messages',
-                    headers={
+                # Use Bearer token for access_token mode, x-api-key for api_key mode
+                if request.auth_mode == 'access_token':
+                    claude_headers = {
+                        'Authorization': f'Bearer {request.api_key}',
+                        'anthropic-version': '2023-06-01',
+                        'Content-Type': 'application/json'
+                    }
+                else:
+                    claude_headers = {
                         'x-api-key': request.api_key,
                         'anthropic-version': '2023-06-01',
                         'Content-Type': 'application/json'
-                    },
+                    }
+                response = await client.post(
+                    'https://api.anthropic.com/v1/messages',
+                    headers=claude_headers,
                     json={
                         'model': request.ai_model or 'claude-3-5-sonnet-latest',
                         'max_tokens': 20,
@@ -581,13 +594,14 @@ async def analyze_execution_plan(
                         }
                     )
                 else:
-                    # Other providers use API key
+                    # Other providers use API key or access token
                     if not request.api_key:
-                        raise ValueError("API key required")
+                        raise ValueError("API key or access token required")
 
                     ai_client = AIClient(
                         provider=AIProvider(request.ai_provider),
-                        api_key=request.api_key
+                        api_key=request.api_key,
+                        auth_mode=request.auth_mode or 'api_key'
                     )
 
                 ai_insights = await get_ai_insights(

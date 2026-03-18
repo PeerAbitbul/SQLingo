@@ -1,9 +1,10 @@
 import styled from 'styled-components';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAPIKeyStore } from '../stores/apiKeyStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import { apiClient, type ModelInfo } from '../utils/api';
+
 import { showToast } from '../stores/toastStore';
+import { ACCESS_TOKEN_PROVIDERS, type AuthMode } from '../types/aiProvider';
 
 interface APIKeyManagerProps {
   isOpen: boolean;
@@ -277,6 +278,7 @@ const HelpLink = styled.a`
   }
 `;
 
+
 const Select = styled.select`
   width: 100%;
   padding: 12px 14px;
@@ -301,30 +303,40 @@ const Select = styled.select`
   }
 `;
 
-const ModelInfo = styled.div`
+const AuthModeToggle = styled.div`
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid ${(props) => props.theme.colors.border};
+  margin-bottom: 16px;
+`;
+
+const AuthModeOption = styled.button<{ $active: boolean }>`
+  flex: 1;
+  padding: 8px 12px;
+  background: ${(props) => props.$active ? props.theme.colors.primary + '22' : 'transparent'};
+  color: ${(props) => props.$active ? props.theme.colors.primary : props.theme.colors.textSecondary};
+  border: none;
   font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:first-child {
+    border-right: 1px solid ${(props) => props.theme.colors.border};
+  }
+
+  &:hover {
+    background: ${(props) => props.$active ? props.theme.colors.primary + '22' : props.theme.colors.surface};
+  }
+`;
+
+const AuthModeHint = styled.div`
+  font-size: 11px;
   color: ${(props) => props.theme.colors.textSecondary};
-`;
-
-const PriceBadge = styled.span`
-  padding: 3px 8px;
-  background-color: ${(props) => props.theme.colors.background};
-  border-radius: 6px;
-  font-weight: 500;
-  font-size: 11px;
-`;
-
-const FreeBadge = styled.span`
-  padding: 3px 8px;
-  background-color: #10B98122;
-  color: #10B981;
-  border-radius: 6px;
-  font-weight: 500;
-  font-size: 11px;
+  margin-top: 6px;
+  line-height: 1.4;
+  opacity: 0.8;
 `;
 
 const Footer = styled.div`
@@ -360,7 +372,10 @@ const providerConfig = {
     name: 'Claude',
     company: 'Anthropic',
     placeholder: 'sk-ant-...',
+    tokenPlaceholder: 'Paste access token from: claude setup-token',
     docsUrl: 'https://console.anthropic.com/',
+    tokenDocsUrl: 'https://docs.anthropic.com/en/docs/claude-code',
+    tokenHint: 'Run "claude setup-token" in Claude Code CLI to generate a token. Note: uses your Claude subscription, may be blocked by Anthropic.',
     modelDocsUrl: 'https://docs.anthropic.com/en/docs/about-claude/models',
     logo: ClaudeLogo,
   },
@@ -368,23 +383,32 @@ const providerConfig = {
     name: 'OpenAI',
     company: 'OpenAI',
     placeholder: 'sk-...',
+    tokenPlaceholder: 'Paste access token from Codex CLI',
     docsUrl: 'https://platform.openai.com/api-keys',
-    modelDocsUrl: '',
+    tokenDocsUrl: 'https://developers.openai.com/codex/auth/',
+    tokenHint: 'Login via Codex CLI to get an access token. Note: uses your ChatGPT subscription.',
+    modelDocsUrl: 'https://platform.openai.com/docs/models',
     logo: OpenAILogo,
   },
   gemini: {
     name: 'Gemini',
     company: 'Google',
     placeholder: 'AIza...',
+    tokenPlaceholder: '',
     docsUrl: 'https://makersuite.google.com/app/apikey',
-    modelDocsUrl: '',
+    tokenDocsUrl: '',
+    tokenHint: '',
+    modelDocsUrl: 'https://ai.google.dev/models',
     logo: GeminiLogo,
   },
   bedrock: {
     name: 'Bedrock',
     company: 'Amazon Web Services',
     placeholder: 'AKIA...',
+    tokenPlaceholder: '',
     docsUrl: 'https://console.aws.amazon.com/bedrock/',
+    tokenDocsUrl: '',
+    tokenHint: '',
     modelDocsUrl: 'https://docs.aws.amazon.com/bedrock/',
     logo: BedrockLogo,
   },
@@ -396,8 +420,10 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   const {
     claudeKey, openaiKey, geminiKey,
     claudeModel, openaiModel, geminiModel, bedrockModel,
+    claudeAuthMode, openaiAuthMode,
     setClaudeKey, setOpenaiKey, setGeminiKey,
-    setClaudeModel, setOpenaiModel, setGeminiModel, setBedrockModel
+    setClaudeModel, setOpenaiModel, setGeminiModel, setBedrockModel,
+    setClaudeAuthMode, setOpenaiAuthMode
   } = useAPIKeyStore();
 
   const {
@@ -419,6 +445,11 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   const [localBedrockSecretKey, setLocalBedrockSecretKey] = useState(bedrockSecretKey);
   const [localBedrockRegion, setLocalBedrockRegion] = useState(bedrockRegion);
 
+  const [localAuthModes, setLocalAuthModes] = useState<{ claude: AuthMode; openai: AuthMode }>({
+    claude: claudeAuthMode,
+    openai: openaiAuthMode,
+  });
+
   const [localModels, setLocalModels] = useState({
     claude: claudeModel,
     openai: openaiModel,
@@ -426,85 +457,21 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
     bedrock: bedrockModel,
   });
 
-  const [availableModels, setAvailableModels] = useState<{
-    claude: ModelInfo[];
-    openai: ModelInfo[];
-    gemini: ModelInfo[];
-    bedrock: ModelInfo[];
-  }>({
-    claude: [],
-    openai: [],
-    gemini: [],
-    bedrock: [],
-  });
-
-  const [isLoadingModels, setIsLoadingModels] = useState(true);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const abortController = new AbortController();
-    let isMounted = true;
-
-    const fetchModels = async () => {
-      try {
-        setIsLoadingModels(true);
-        const response = await apiClient.getAllModels();
-
-        if (!isMounted || abortController.signal.aborted) return;
-
-        if (response.success) {
-          setAvailableModels({
-            claude: response.claude,
-            openai: response.openai,
-            gemini: response.gemini,
-            bedrock: [
-              { id: 'anthropic.claude-3-5-sonnet-20241022-v2:0', name: 'Claude 3.5 Sonnet v2', description: 'Recommended', provider: 'bedrock' },
-              { id: 'anthropic.claude-3-5-sonnet-20240620-v1:0', name: 'Claude 3.5 Sonnet v1', description: '', provider: 'bedrock' },
-              { id: 'anthropic.claude-3-haiku-20240307-v1:0', name: 'Claude 3 Haiku', description: 'Fast & affordable', provider: 'bedrock' },
-              { id: 'meta.llama3-70b-instruct-v1:0', name: 'Llama 3 70B', description: '', provider: 'bedrock' },
-            ],
-          });
-        }
-      } catch (error: any) {
-        if (error.name === 'AbortError') return;
-
-        console.error('Failed to fetch models:', error);
-
-        if (!isMounted) return;
-
-        setAvailableModels({
-          claude: [
-            { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', description: 'Recommended', provider: 'claude' }
-          ],
-          openai: [
-            { id: 'gpt-4o', name: 'GPT-4o', description: 'Recommended', provider: 'openai' }
-          ],
-          gemini: [
-            { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Recommended', provider: 'gemini' }
-          ],
-          bedrock: [
-            { id: 'anthropic.claude-3-5-sonnet-20241022-v2:0', name: 'Claude 3.5 Sonnet v2', description: 'Recommended', provider: 'bedrock' },
-          ],
-        });
-      } finally {
-        if (isMounted) {
-          setIsLoadingModels(false);
-        }
-      }
-    };
-
-    fetchModels();
-
-    return () => {
-      isMounted = false;
-      abortController.abort();
-    };
-  }, [isOpen]);
-
   const validateApiKey = (provider: string, key: string): boolean => {
     // Skip validation for empty keys (user might want to clear it)
     if (!key || key.trim() === '') return true;
+
+    // Skip format validation for access token mode - tokens have unpredictable formats
+    const authMode = (provider === 'claude' || provider === 'openai')
+      ? localAuthModes[provider]
+      : 'api_key';
+    if (authMode === 'access_token') {
+      if (key.length < 10) {
+        showToast.error('Access token seems too short');
+        return false;
+      }
+      return true;
+    }
 
     // Validate API key format based on provider
     switch (provider) {
@@ -576,18 +543,25 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
     setGeminiModel(localModels.gemini);
     setBedrockModel(localModels.bedrock);
 
+    // Save auth modes
+    setClaudeAuthMode(localAuthModes.claude);
+    setOpenaiAuthMode(localAuthModes.openai);
+
     // Save Bedrock credentials (Access Key, Secret Key, Region)
     setBedrockCredentials(localKeys.bedrock, localBedrockSecretKey, localBedrockRegion);
 
-    showToast.success('API keys saved successfully');
+    showToast.success('Settings saved successfully');
     onClose();
   };
 
   const config = providerConfig[activeTab];
   const currentKey = localKeys[activeTab];
   const currentModel = localModels[activeTab];
-  const models = availableModels[activeTab];
-  const selectedModelInfo = models.find(m => m.id === currentModel);
+  const supportsAccessToken = ACCESS_TOKEN_PROVIDERS.includes(activeTab);
+  const currentAuthMode = (activeTab === 'claude' || activeTab === 'openai')
+    ? localAuthModes[activeTab]
+    : 'api_key' as AuthMode;
+  const isAccessToken = currentAuthMode === 'access_token';
 
   return (
     <Overlay $isOpen={isOpen} onClick={onClose}>
@@ -626,12 +600,34 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
         </TabsContainer>
 
         <Content>
+          {supportsAccessToken && (
+            <FormGroup>
+              <Label>Authentication Method</Label>
+              <AuthModeToggle>
+                <AuthModeOption
+                  $active={!isAccessToken}
+                  onClick={() => setLocalAuthModes({ ...localAuthModes, [activeTab]: 'api_key' as AuthMode })}
+                >
+                  API Key (Recommended)
+                </AuthModeOption>
+                <AuthModeOption
+                  $active={isAccessToken}
+                  onClick={() => setLocalAuthModes({ ...localAuthModes, [activeTab]: 'access_token' as AuthMode })}
+                >
+                  Access Token
+                </AuthModeOption>
+              </AuthModeToggle>
+            </FormGroup>
+          )}
+
           <FormGroup>
-            <Label>{activeTab === 'bedrock' ? 'AWS Access Key' : 'API Key'}</Label>
+            <Label>
+              {activeTab === 'bedrock' ? 'AWS Access Key' : isAccessToken ? 'Access Token' : 'API Key'}
+            </Label>
             <InputWrapper>
               <Input
                 type="password"
-                placeholder={config.placeholder}
+                placeholder={isAccessToken ? config.tokenPlaceholder : config.placeholder}
                 value={currentKey}
                 onChange={(e) =>
                   setLocalKeys({ ...localKeys, [activeTab]: e.target.value })
@@ -642,9 +638,18 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
                 {currentKey ? <CheckIcon /> : <CircleIcon />}
               </StatusIcon>
             </InputWrapper>
-            <HelpLink href={config.docsUrl} target="_blank">
-              Get your {activeTab === 'bedrock' ? 'AWS credentials' : 'API key'} <ExternalLinkIcon />
-            </HelpLink>
+            {isAccessToken ? (
+              <>
+                <HelpLink href={config.tokenDocsUrl} target="_blank">
+                  How to get an access token <ExternalLinkIcon />
+                </HelpLink>
+                <AuthModeHint>{config.tokenHint}</AuthModeHint>
+              </>
+            ) : (
+              <HelpLink href={config.docsUrl} target="_blank">
+                Get your {activeTab === 'bedrock' ? 'AWS credentials' : 'API key'} <ExternalLinkIcon />
+              </HelpLink>
+            )}
           </FormGroup>
 
           {activeTab === 'bedrock' && (
@@ -682,52 +687,19 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
 
           <FormGroup>
             <Label>Model</Label>
-            {activeTab === 'claude' ? (
-              <>
-                <Input
-                  type="text"
-                  placeholder="claude-3-5-sonnet-latest"
-                  value={currentModel}
-                  onChange={(e) =>
-                    setLocalModels({ ...localModels, [activeTab]: e.target.value })
-                  }
-                  $hasValue={!!currentModel}
-                />
-                <HelpLink href={config.modelDocsUrl} target="_blank">
-                  View available models <ExternalLinkIcon />
-                </HelpLink>
-              </>
-            ) : (
-              <>
-                <Select
-                  value={currentModel}
-                  onChange={(e) =>
-                    setLocalModels({ ...localModels, [activeTab]: e.target.value })
-                  }
-                  disabled={isLoadingModels}
-                >
-                  {isLoadingModels ? (
-                    <option>Loading models...</option>
-                  ) : (
-                    models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name} {model.description && `- ${model.description}`}
-                      </option>
-                    ))
-                  )}
-                </Select>
-                {selectedModelInfo && (
-                  <ModelInfo>
-                    {selectedModelInfo.pricing?.input === 0 ? (
-                      <FreeBadge>Free</FreeBadge>
-                    ) : selectedModelInfo.pricing && (
-                      <PriceBadge>
-                        ${selectedModelInfo.pricing.input}-${selectedModelInfo.pricing.output}/1M tokens
-                      </PriceBadge>
-                    )}
-                  </ModelInfo>
-                )}
-              </>
+            <Input
+              type="text"
+              placeholder="Enter model name..."
+              value={currentModel}
+              onChange={(e) =>
+                setLocalModels({ ...localModels, [activeTab]: e.target.value })
+              }
+              $hasValue={!!currentModel}
+            />
+            {config.modelDocsUrl && (
+              <HelpLink href={config.modelDocsUrl} target="_blank">
+                View available models <ExternalLinkIcon />
+              </HelpLink>
             )}
           </FormGroup>
         </Content>

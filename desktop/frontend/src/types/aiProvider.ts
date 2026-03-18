@@ -5,6 +5,11 @@
 
 export type AIProvider = 'claude' | 'openai' | 'gemini' | 'bedrock';
 
+export type AuthMode = 'api_key' | 'access_token';
+
+/** Providers that support access token authentication */
+export const ACCESS_TOKEN_PROVIDERS: AIProvider[] = ['claude', 'openai'];
+
 export const AI_PROVIDERS = {
   CLAUDE: 'claude' as const,
   OPENAI: 'openai' as const,

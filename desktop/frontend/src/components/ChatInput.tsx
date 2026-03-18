@@ -178,7 +178,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
   const { addMessage, chats, updateChat } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
-  const { getKeyForProvider, getModelForProvider } = useAPIKeyStore();
+  const { getKeyForProvider, getModelForProvider, getAuthModeForProvider } = useAPIKeyStore();
 
   const generateSQLMutation = useGenerateSQL();
 
@@ -234,6 +234,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
       // Get settings for analysis
       const apiKey = getKeyForProvider(aiProvider);
       const aiModel = getModelForProvider(aiProvider);
+      const planAuthMode = getAuthModeForProvider(aiProvider);
 
       // All providers use BYOK mode
       const mode = 'byok';
@@ -251,7 +252,8 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
             secret_key: bedrockSecretKey,
             region: bedrockRegion,
           }
-          : undefined
+          : undefined,
+        planAuthMode
       );
 
       // Remove analyzing message
@@ -400,13 +402,15 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
     // All providers use BYOK mode
     const mode = 'byok';
 
-    // Check credentials - need API key (except for bedrock which uses AWS credentials)
+    // Check credentials - need API key or access token (except for bedrock which uses AWS credentials)
     let apiKey: string | undefined;
+    const authMode = getAuthModeForProvider(aiProvider);
 
     if (aiProvider !== 'bedrock') {
       apiKey = getKeyForProvider(aiProvider);
       if (!apiKey) {
-        showToast.warning(`Please set your ${aiProvider.toUpperCase()} API key in settings`);
+        const credLabel = authMode === 'access_token' ? 'access token' : 'API key';
+        showToast.warning(`Please set your ${aiProvider.toUpperCase()} ${credLabel} in settings`);
         return;
       }
     }
@@ -452,6 +456,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
         ai_provider: aiProvider,
         ai_model: aiModel,
         api_key: apiKey,
+        auth_mode: authMode,
         bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
           ? {
             access_key: bedrockAccessKey,
@@ -486,6 +491,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
             ai_provider: aiProvider,
             ai_model: aiModel,
             api_key: apiKey,
+            auth_mode: authMode,
             bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
               ? {
                 access_key: bedrockAccessKey,

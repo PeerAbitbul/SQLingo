@@ -31,15 +31,19 @@ class ClaudeProvider(AIProviderBase):
         "claude-sonnet-4-latest": {"input": 3.00, "output": 15.00},
     }
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str = None, auth_token: str = None):
         """
         Initialize Claude provider.
 
         Args:
-            api_key: Anthropic API key
+            api_key: Anthropic API key (x-api-key header)
+            auth_token: Access token from Claude Code CLI (Authorization: Bearer header)
         """
-        super().__init__(api_key, "claude")
-        self.client = Anthropic(api_key=api_key)
+        super().__init__(api_key or auth_token or '', "claude")
+        if auth_token:
+            self.client = Anthropic(auth_token=auth_token)
+        else:
+            self.client = Anthropic(api_key=api_key)
         # Use latest stable version
         self.default_model = "claude-3-5-sonnet-latest"
     
@@ -108,10 +112,11 @@ class ClaudeProvider(AIProviderBase):
             logger.error(f"Claude API error: {error_str}")
 
             # Provide user-friendly error messages
-            if "authentication_error" in error_str or "invalid x-api-key" in error_str:
+            if "authentication_error" in error_str or "invalid x-api-key" in error_str or "invalid_token" in error_str:
                 raise RuntimeError(
-                    "Invalid Claude API key. Please check your API key in Settings > API Keys. "
-                    "Get your API key from: https://console.anthropic.com/settings/keys"
+                    "Invalid Claude credentials. Please check your API key or access token in Settings > API Keys. "
+                    "Get your API key from: https://console.anthropic.com/settings/keys "
+                    "or generate an access token using: claude setup-token"
                 )
             elif "not_found_error" in error_str:
                 raise RuntimeError(

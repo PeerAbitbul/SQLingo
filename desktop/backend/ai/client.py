@@ -13,14 +13,19 @@ from ai.bedrock_provider import BedrockProvider
 class AIClient:
     """Unified AI client for SQL generation"""
 
-    def __init__(self, provider: AIProvider, api_key: str = None, bedrock_config: dict = None):
+    def __init__(self, provider: AIProvider, api_key: str = None, bedrock_config: dict = None, auth_mode: str = 'api_key'):
         self.provider = provider
         self.api_key = api_key
+        self.auth_mode = auth_mode
 
         # Initialize provider-specific client
         if provider == AIProvider.CLAUDE:
-            self.client = ClaudeProvider(api_key=api_key)
+            if auth_mode == 'access_token':
+                self.client = ClaudeProvider(auth_token=api_key)
+            else:
+                self.client = ClaudeProvider(api_key=api_key)
         elif provider == AIProvider.OPENAI:
+            # OpenAI SDK uses Bearer header for both api_key and access_token
             self.client = OpenAIProvider(api_key=api_key)
         elif provider == AIProvider.GEMINI:
             self.client = GeminiProvider(api_key=api_key)
@@ -363,15 +368,16 @@ User: {question}
 
 
 
-def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock_config: dict = None):
+def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock_config: dict = None, auth_mode: str = 'api_key'):
     """
     Get AI client for a specific provider
 
     Args:
         provider: Provider name (claude, openai, gemini, bedrock)
-        api_key: API key for the provider (not needed for bedrock)
+        api_key: API key or access token for the provider (not needed for bedrock)
         model: Optional specific model to use
         bedrock_config: Optional AWS credentials for Bedrock (dict with access_key, secret_key, region)
+        auth_mode: Authentication mode - 'api_key' or 'access_token'
 
     Returns:
         AIClient instance with the specified provider
@@ -394,7 +400,8 @@ def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock
     client = AIClient(
         provider=provider_map[provider_lower],
         api_key=api_key,
-        bedrock_config=bedrock_config
+        bedrock_config=bedrock_config,
+        auth_mode=auth_mode
     )
 
     # Set default model if provided

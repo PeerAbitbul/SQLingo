@@ -59,7 +59,8 @@ export const analyzeExecutionPlan = async (
   aiModel?: string,
   apiKey?: string,
   token?: string,
-  bedrockConfig?: BedrockConfig
+  bedrockConfig?: BedrockConfig,
+  authMode?: 'api_key' | 'access_token'
 ): Promise<ExecutionPlanAnalysis> => {
   const apiBaseUrl = await getBackendUrl();
 
@@ -81,6 +82,7 @@ export const analyzeExecutionPlan = async (
       ai_model: aiModel,
       mode,
       api_key: apiKey,
+      auth_mode: authMode,
       bedrock_config: bedrockConfig,
     }),
   });
