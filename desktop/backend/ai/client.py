@@ -9,11 +9,12 @@ from ai.openai_provider import OpenAIProvider
 from ai.claude_provider import ClaudeProvider
 from ai.gemini_provider import GeminiProvider
 from ai.bedrock_provider import BedrockProvider
+from ai.ollama_provider import OllamaProvider
 
 class AIClient:
     """Unified AI client for SQL generation"""
 
-    def __init__(self, provider: AIProvider, api_key: str = None, bedrock_config: dict = None, auth_mode: str = 'api_key'):
+    def __init__(self, provider: AIProvider, api_key: str = None, bedrock_config: dict = None, auth_mode: str = 'api_key', ollama_base_url: str = None):
         self.provider = provider
         self.api_key = api_key
         self.auth_mode = auth_mode
@@ -40,6 +41,9 @@ class AIClient:
             else:
                 # Use default AWS credentials (env vars, IAM role, etc.)
                 self.client = BedrockProvider()
+        elif provider == AIProvider.OLLAMA:
+            # Local Ollama server - no API key needed
+            self.client = OllamaProvider(base_url=ollama_base_url)
 
         else:
             raise ValueError(f"Unsupported AI provider: {provider}")
@@ -114,7 +118,9 @@ class AIClient:
         provider_name = {
             'openai': 'OpenAI',
             'claude': 'Claude',
-            'gemini': 'Gemini'
+            'gemini': 'Gemini',
+            'bedrock': 'Bedrock',
+            'ollama': 'Ollama (Local)'
         }.get(provider.lower(), provider)
         
         # Create header
@@ -368,16 +374,17 @@ User: {question}
 
 
 
-def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock_config: dict = None, auth_mode: str = 'api_key'):
+def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock_config: dict = None, auth_mode: str = 'api_key', ollama_base_url: str = None):
     """
     Get AI client for a specific provider
 
     Args:
-        provider: Provider name (claude, openai, gemini, bedrock)
-        api_key: API key or access token for the provider (not needed for bedrock)
+        provider: Provider name (claude, openai, gemini, bedrock, ollama)
+        api_key: API key or access token for the provider (not needed for bedrock/ollama)
         model: Optional specific model to use
         bedrock_config: Optional AWS credentials for Bedrock (dict with access_key, secret_key, region)
         auth_mode: Authentication mode - 'api_key' or 'access_token'
+        ollama_base_url: Optional custom Ollama server URL (default: http://localhost:11434)
 
     Returns:
         AIClient instance with the specified provider
@@ -390,7 +397,7 @@ def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock
         "openai": AIProvider.OPENAI,
         "gemini": AIProvider.GEMINI,
         "bedrock": AIProvider.BEDROCK,
-
+        "ollama": AIProvider.OLLAMA,
     }
 
     if provider_lower not in provider_map:
@@ -401,7 +408,8 @@ def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock
         provider=provider_map[provider_lower],
         api_key=api_key,
         bedrock_config=bedrock_config,
-        auth_mode=auth_mode
+        auth_mode=auth_mode,
+        ollama_base_url=ollama_base_url
     )
 
     # Set default model if provided

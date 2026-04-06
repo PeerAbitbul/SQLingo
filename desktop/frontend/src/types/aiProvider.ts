@@ -3,7 +3,7 @@
  * Centralized type definitions for AI providers used across the app
  */
 
-export type AIProvider = 'claude' | 'openai' | 'gemini' | 'bedrock';
+export type AIProvider = 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama';
 
 export type AuthMode = 'api_key' | 'access_token';
 
@@ -15,6 +15,7 @@ export const AI_PROVIDERS = {
   OPENAI: 'openai' as const,
   GEMINI: 'gemini' as const,
   BEDROCK: 'bedrock' as const,
+  OLLAMA: 'ollama' as const,
 };
 
 export interface AIProviderConfig {
@@ -22,6 +23,7 @@ export interface AIProviderConfig {
   color: string;
   requiresAPIKey: boolean;
   requiresSubscription: boolean;
+  isLocal?: boolean;
 }
 
 export const AI_PROVIDER_CONFIGS: Record<AIProvider, AIProviderConfig> = {
@@ -48,6 +50,13 @@ export const AI_PROVIDER_CONFIGS: Record<AIProvider, AIProviderConfig> = {
     color: '#FF9900', // AWS orange
     requiresAPIKey: true, // AWS credentials
     requiresSubscription: false,
+  },
+  ollama: {
+    name: 'Ollama',
+    color: '#0A0A0A',
+    requiresAPIKey: false,
+    requiresSubscription: false,
+    isLocal: true,
   },
 };
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router
+from api.ollama_routes import router as ollama_router
 from startup import init_on_startup
 
 # Load environment variables from .env file
@@ -88,6 +89,7 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(router, prefix="/api")
+app.include_router(ollama_router, prefix="/api/ollama")
 
 @app.get("/")
 async def root():

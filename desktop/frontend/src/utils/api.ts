@@ -44,11 +44,12 @@ export interface ChatRequest {
   question: string;
   connection_string: string;
   database_type: 'sqlserver' | 'postgresql' | 'mysql';
-  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock';
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama';
   ai_model?: string;  // Optional: specific model to use
-  api_key?: string;  // For BYOK mode (not used for bedrock)
+  api_key?: string;  // For BYOK mode (not used for bedrock/ollama)
   auth_mode?: 'api_key' | 'access_token';  // Authentication mode
   bedrock_config?: BedrockConfig;  // For Bedrock BYOK mode
+  ollama_base_url?: string;  // For Ollama local mode (default: http://localhost:11434)
   mode?: 'byok';  // Always BYOK mode
   conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>;  // Chat history for context
 }
@@ -77,11 +78,12 @@ export interface QueryExecuteResponse {
 
 export interface GenerateTitleRequest {
   question: string;
-  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock';
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama';
   ai_model?: string;  // Optional: specific model to use
-  api_key?: string;  // For BYOK mode (not used for bedrock)
+  api_key?: string;  // For BYOK mode (not used for bedrock/ollama)
   auth_mode?: 'api_key' | 'access_token';  // Authentication mode
   bedrock_config?: BedrockConfig;  // For Bedrock BYOK mode
+  ollama_base_url?: string;  // For Ollama local mode
   mode?: 'byok';  // Always BYOK mode
 }
 

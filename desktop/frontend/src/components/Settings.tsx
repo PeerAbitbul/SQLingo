@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react';
 import { useThemeStore } from '../stores/themeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useChatStore } from '../stores/chatStore';
+import { useOllamaStore } from '../stores/ollamaStore';
+import { OllamaManager } from './OllamaManager';
 import errorLogger from '../utils/errorLogger';
 
 interface SettingsProps {
@@ -206,6 +208,7 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
 
 
   const { chats, removeChat } = useChatStore();
+  const { installedModels: ollamaModels } = useOllamaStore();
 
   const [localRetentionDays, setLocalRetentionDays] = useState(retentionDays.toString());
   const [localMaxMessages, setLocalMaxMessages] = useState(maxMessagesPerChat.toString());
@@ -319,9 +322,19 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
               <option value="claude">Claude (Anthropic)</option>
               <option value="openai">GPT-4 (OpenAI)</option>
               <option value="gemini">Gemini (Google)</option>
+              {ollamaModels.length > 0 && (
+                <option value="ollama">Ollama (Local)</option>
+              )}
             </Select>
           </SettingRow>
         </Section>
+
+        {isOpen && (
+          <Section>
+            <SectionTitle>Local AI (Ollama)</SectionTitle>
+            <OllamaManager />
+          </Section>
+        )}
 
         <Section>
           <SectionTitle>Data Management</SectionTitle>

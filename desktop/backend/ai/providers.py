@@ -9,5 +9,6 @@ class AIProvider(str, Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
     BEDROCK = "bedrock"
+    OLLAMA = "ollama"
 
 

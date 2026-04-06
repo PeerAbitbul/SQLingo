@@ -52,11 +52,12 @@ class ChatRequest(BaseModel):
     question: str
     connection_string: str
     database_type: str
-    ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock'
+    ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock', 'ollama'
     ai_model: Optional[str] = None  # Optional: specific model to use
-    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock/ollama)
     auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
     bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
+    ollama_base_url: Optional[str] = None  # For Ollama local mode (default: http://localhost:11434)
     conversation_history: Optional[List[ConversationMessage]] = None  # Chat history for context
 
 
@@ -73,11 +74,12 @@ class QueryExecuteRequest(BaseModel):
 
 class GenerateTitleRequest(BaseModel):
     question: str
-    ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock'
+    ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock', 'ollama'
     ai_model: Optional[str] = None  # Optional: specific model to use
-    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock/ollama)
     auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
     bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
+    ollama_base_url: Optional[str] = None  # For Ollama local mode (default: http://localhost:11434)
 
 
 class GenerateTitleResponse(BaseModel):
@@ -166,6 +168,12 @@ async def generate_sql(request: ChatRequest):
                     'secret_key': request.bedrock_config.secret_key,
                     'region': request.bedrock_config.region
                 }
+            )
+        elif request.ai_provider == 'ollama':
+            # Ollama runs locally - no API key required
+            ai_client = AIClient(
+                provider=AIProvider.OLLAMA,
+                ollama_base_url=request.ollama_base_url
             )
         else:
             # Other providers use API key or access token
@@ -420,6 +428,12 @@ async def generate_chat_title(request: GenerateTitleRequest):
                     'region': request.bedrock_config.region
                 }
             )
+        elif request.ai_provider == 'ollama':
+            # Ollama runs locally - no API key required
+            ai_client = AIClient(
+                provider=AIProvider.OLLAMA,
+                ollama_base_url=request.ollama_base_url
+            )
         else:
             # Other providers use API key or access token
             if not request.api_key:
@@ -537,6 +551,37 @@ Return ONLY the title, nothing else."""
                 words = request.question.split()[:4]
                 title = ' '.join(words).capitalize() if words else 'New Chat'
                 return GenerateTitleResponse(title=title, success=True)
+
+        elif request.ai_provider == 'ollama':
+            # Ollama runs locally - call /api/chat directly
+            base_url = (request.ollama_base_url or 'http://localhost:11434').rstrip('/')
+            model_name = request.ai_model or 'gemma4:e4b'
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f'{base_url}/api/chat',
+                        json={
+                            'model': model_name,
+                            'messages': [{'role': 'user', 'content': prompt}],
+                            'stream': False,
+                            'options': {
+                                'temperature': 0.7,
+                                'num_predict': 20
+                            }
+                        },
+                        timeout=60.0
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        title = result.get('message', {}).get('content', '').strip()
+                        if title:
+                            return GenerateTitleResponse(title=title, success=True)
+            except Exception as e:
+                print(f"Ollama title generation failed: {str(e)}")
+            # Fallback on error
+            words = request.question.split()[:4]
+            title = ' '.join(words).capitalize() if words else 'New Chat'
+            return GenerateTitleResponse(title=title, success=True)
         
         # Fallback: Extract first few words from question
         words = request.question.split()[:4]

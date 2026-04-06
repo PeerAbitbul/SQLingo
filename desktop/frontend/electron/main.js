@@ -71,8 +71,13 @@ function startBackend() {
       backendPath = path.join(__dirname, '..', '..', 'backend', 'main.py');
       logToFile(`Starting backend in development mode: ${backendPath}`);
 
-      // Try to find Python executable
-      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      // Try to find Python executable - prefer venv if available
+      const backendDir = path.join(__dirname, '..', '..', 'backend');
+      const venvPython = process.platform === 'win32'
+        ? path.join(backendDir, 'venv', 'Scripts', 'python.exe')
+        : path.join(backendDir, 'venv', 'bin', 'python');
+      const pythonCmd = fs.existsSync(venvPython) ? venvPython : (process.platform === 'win32' ? 'python' : 'python3');
+      logToFile(`Using Python: ${pythonCmd}`);
 
       // Pass environment variables to backend (including DEV_MODE)
       const backendEnv = {

@@ -8,6 +8,7 @@ import { useGenerateSQL } from '../hooks/useAPI';
 import { apiClient } from '../utils/api';
 import { analyzeExecutionPlan, isExecutionPlanXML } from '../utils/executionPlanApi';
 import { showToast } from '../stores/toastStore';
+import { useOllamaStore } from '../stores/ollamaStore';
 import { InlineLoading } from './Loading';
 import { v4 as uuidv4 } from 'uuid';
 import type { AIProvider } from '../types/aiProvider';
@@ -112,6 +113,13 @@ const BedrockLogo = () => (
   </svg>
 );
 
+// Ollama Logo (local AI)
+const OllamaLogo = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" />
+  </svg>
+);
+
 const InputWrapper = styled.div`
   display: flex;
   gap: ${(props) => props.theme.spacing.sm};
@@ -179,6 +187,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
   const { getConnection, buildConnectionString } = useConnectionStore();
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
   const { getKeyForProvider, getModelForProvider, getAuthModeForProvider } = useAPIKeyStore();
+  const { installedModels: ollamaInstalled, selectedModel: ollamaSelectedModel, baseUrl: ollamaBaseUrl } = useOllamaStore();
 
   const generateSQLMutation = useGenerateSQL();
 
@@ -402,11 +411,17 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
     // All providers use BYOK mode
     const mode = 'byok';
 
-    // Check credentials - need API key or access token (except for bedrock which uses AWS credentials)
+    // Check credentials - need API key or access token (except for bedrock/ollama)
     let apiKey: string | undefined;
     const authMode = getAuthModeForProvider(aiProvider);
 
-    if (aiProvider !== 'bedrock') {
+    if (aiProvider === 'ollama') {
+      // Ollama runs locally - no API key needed, just check a model is selected
+      if (!ollamaSelectedModel) {
+        showToast.warning('Please select an Ollama model in Settings > Local AI');
+        return;
+      }
+    } else if (aiProvider !== 'bedrock') {
       apiKey = getKeyForProvider(aiProvider);
       if (!apiKey) {
         const credLabel = authMode === 'access_token' ? 'access token' : 'API key';
@@ -436,8 +451,8 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
       // Build connection string from connection details
       const connectionString = buildConnectionString(connection);
 
-      // Get the model for the selected provider from API Key Store
-      const aiModel = getModelForProvider(aiProvider);
+      // Get the model for the selected provider from API Key Store (or Ollama store)
+      const aiModel = aiProvider === 'ollama' ? (ollamaSelectedModel || undefined) : getModelForProvider(aiProvider);
 
       // Get conversation history (last 10 messages for context)
       // Use currentChat from above instead of fetching again
@@ -464,6 +479,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
             region: bedrockRegion,
           }
           : undefined,
+        ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
         mode: mode,
         conversation_history: conversationHistory,
       });
@@ -499,6 +515,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
                 region: bedrockRegion,
               }
               : undefined,
+            ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
             mode: mode,
           });
 
@@ -584,6 +601,16 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
             <ProviderIconWrapper><BedrockLogo /></ProviderIconWrapper>
             Bedrock
           </ProviderButton>
+          {ollamaInstalled.length > 0 && (
+            <ProviderButton
+              $active={currentProvider === 'ollama'}
+              $provider="ollama"
+              onClick={() => handleProviderChange('ollama')}
+            >
+              <ProviderIconWrapper><OllamaLogo /></ProviderIconWrapper>
+              Ollama
+            </ProviderButton>
+          )}
         </ProviderSelectorCompact>
       </TopBar>
 
