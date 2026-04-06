@@ -20,6 +20,7 @@ interface ChatInputProps {
 }
 
 const InputContainer = styled.div`
+  position: relative;
   padding: ${(props) => props.theme.spacing.md};
   background-color: ${(props) => props.theme.colors.surface};
   border-top: 1px solid ${(props) => props.theme.colors.border};
@@ -179,8 +180,62 @@ const LoadingIndicator = styled.div`
   text-align: center;
 `;
 
+const CommandMenuContainer = styled.div`
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  width: 100%;
+  background-color: ${(props) => props.theme.colors.surface};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: ${(props) => props.theme.borderRadius.md};
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
+  margin-bottom: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+`;
+
+const CommandItem = styled.div<{ $selected: boolean }>`
+  padding: 10px 12px;
+  cursor: pointer;
+  background-color: ${(props) => props.$selected ? props.theme.colors.background : 'transparent'};
+  border-bottom: 1px solid ${(props) => props.theme.colors.border};
+  
+  &:last-child {
+    border-bottom: none;
+  }
+  
+  &:hover {
+    background-color: ${(props) => props.theme.colors.background};
+  }
+`;
+
+const CommandTitle = styled.div`
+  font-weight: 600;
+  font-size: 13px;
+  color: ${(props) => props.theme.colors.text};
+`;
+
+const CommandDesc = styled.div`
+  font-size: 11px;
+  color: ${(props) => props.theme.colors.textSecondary};
+  margin-top: 2px;
+`;
+
+const SLASH_COMMANDS = [
+  { cmd: '/permission mssql', desc: 'Show MSSQL minimum permissions' },
+  { cmd: '/permission postgres', desc: 'Show PostgreSQL minimum permissions' },
+  { cmd: '/permission mysql', desc: 'Show MySQL minimum permissions' }
+];
+
 export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: ChatInputProps) => {
   const [input, setInput] = useState('');
+  const [showCommands, setShowCommands] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [filteredCommands, setFilteredCommands] = useState(SLASH_COMMANDS);
+  
   const [isAnalyzingPlanLocal, setIsAnalyzingPlanLocal] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { addMessage, chats, updateChat } = useChatStore();
@@ -227,6 +282,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
 
       // Clear input and reset textarea height
       setInput('');
+      setShowCommands(false);
       if (textareaRef.current) {
         textareaRef.current.style.height = '42px';
       }
@@ -377,12 +433,80 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
     return lines.join('\n');
   };
 
+  const handleSlashCommand = (cmdText: string) => {
+    const parts = cmdText.split(' ').map(p => p.trim()).filter(Boolean);
+    const command = parts[0].toLowerCase();
+
+    // Store input and clear quickly
+    setInput('');
+    setShowCommands(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = '42px';
+    }
+
+    addMessage(chatId, {
+      id: uuidv4(),
+      role: 'user',
+      content: cmdText,
+      timestamp: new Date(),
+    });
+
+    if (command === '/permission' || command === '/permissions') {
+      const dbType = parts[1]?.toLowerCase();
+      let responseContent = '';
+
+      if (!dbType) {
+        responseContent = `Please specify the database type. Usage: \`/permission [mssql | postgres | mysql]\`\n\nFor example:\n\`/permission mssql\``;
+      } else if (dbType === 'mssql' || dbType === 'sqlserver') {
+        responseContent = `### MSSQL Minimum Permissions
+* **Data Reading:** Requires \`db_datareader\` role membership.
+* **Schema Extraction:** Strongly recommended to \`GRANT VIEW DEFINITION\` to read full definitions of constraints, views, and procedures.
+* *(Optional - for Execution Plans)*: \`GRANT SHOWPLAN\`.`;
+      } else if (dbType === 'postgres' || dbType === 'postgresql') {
+        responseContent = `### PostgreSQL Minimum Permissions
+* **Base Connection:** \`GRANT CONNECT ON DATABASE db_name TO user_name;\`
+* **Schema Access:** \`GRANT USAGE ON SCHEMA public TO user_name;\`
+* **Data Reading:** \`GRANT SELECT ON ALL TABLES IN SCHEMA public TO user_name;\`
+*(Access to information_schema is granted by default)*`;
+      } else if (dbType === 'mysql') {
+        responseContent = `### MySQL Minimum Permissions
+* **Data and Schema Reading:** \`GRANT SELECT ON database_name.* TO 'user'@'%';\`
+*(In MySQL, schema metadata access in information_schema is derived from SELECT permissions)*`;
+      } else {
+        responseContent = `Unknown database type: **${dbType}**. Please use \`mssql\`, \`postgres\`, or \`mysql\`.`;
+      }
+
+      addMessage(chatId, {
+        id: uuidv4(),
+        role: 'assistant',
+        content: responseContent,
+        timestamp: new Date(),
+      });
+      return;
+    }
+
+    addMessage(chatId, {
+      id: uuidv4(),
+      role: 'assistant',
+      content: `Unknown command: ${command}`,
+      timestamp: new Date(),
+    });
+  };
+
   const handleSend = async () => {
     if (!input.trim()) return;
 
     // Check if input is execution plan XML
     if (isExecutionPlanXML(input)) {
       await handleExecutionPlanPaste(input);
+      return;
+    }
+
+    const trimmedInput = input.trim();
+    
+    // Check if it's a slash command
+    if (trimmedInput.startsWith('/')) {
+      handleSlashCommand(trimmedInput);
       return;
     }
 
@@ -442,6 +566,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
     };
     addMessage(chatId, userMessage);
     setInput('');
+    setShowCommands(false);
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = '42px';
@@ -542,7 +667,51 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    
+    if (val.startsWith('/')) {
+      const search = val.toLowerCase();
+      const filtered = SLASH_COMMANDS.filter(c => c.cmd.startsWith(search));
+      if (filtered.length > 0) {
+        setFilteredCommands(filtered);
+        setShowCommands(true);
+        setSelectedIndex(0);
+      } else {
+        setShowCommands(false);
+      }
+    } else {
+      setShowCommands(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showCommands) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev < filteredCommands.length - 1 ? prev + 1 : prev));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev > 0 ? prev - 1 : 0));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const selected = filteredCommands[selectedIndex];
+        if (selected) {
+          handleSlashCommand(selected.cmd);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        setShowCommands(false);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -615,11 +784,26 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
       </TopBar>
 
       <InputWrapper>
+        {showCommands && (
+          <CommandMenuContainer>
+            {filteredCommands.map((cmd, idx) => (
+              <CommandItem 
+                key={cmd.cmd} 
+                $selected={idx === selectedIndex}
+                onClick={() => handleSlashCommand(cmd.cmd)}
+                onMouseEnter={() => setSelectedIndex(idx)}
+              >
+                <CommandTitle>{cmd.cmd}</CommandTitle>
+                <CommandDesc>{cmd.desc}</CommandDesc>
+              </CommandItem>
+            ))}
+          </CommandMenuContainer>
+        )}
         <Input
           ref={textareaRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
           placeholder="Type your question... (Shift+Enter for new line)"
           disabled={isLoading}
           rows={1}
