@@ -3,11 +3,13 @@ import { useState } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { showDialog } from '../stores/dialogStore';
 
 interface ChatSidebarProps {
   isOpen: boolean;
   onToggle: () => void;
   onSettingsClick: () => void;
+  onAgentsClick: () => void;
   onAPIKeysClick: () => void;
   onConnectionsClick: () => void;
 }
@@ -225,35 +227,63 @@ const RenameInput = styled.input`
 `;
 
 const SidebarFooter = styled.div`
-  padding: 12px;
+  padding: 10px 12px;
   border-top: 1px solid ${(props) => props.theme.colors.border};
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  justify-content: space-evenly;
+  align-items: center;
+  gap: 4px;
 `;
 
-const FooterButton = styled.button`
-  width: 100%;
-  padding: 10px 12px;
+const FooterIconButton = styled.button`
+  width: 40px;
+  height: 40px;
+  padding: 0;
   background: none;
-  border: 1px solid ${(props) => props.theme.colors.border};
-  border-radius: 6px;
-  color: ${(props) => props.theme.colors.text};
-  font-size: 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: ${(props) => props.theme.colors.textSecondary};
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
   transition: all 0.2s;
+  position: relative;
 
   svg {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
+  }
+
+  &::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) scale(0.8);
+    background-color: ${(props) => props.theme.colors.surface};
+    color: ${(props) => props.theme.colors.text};
+    border: 1px solid ${(props) => props.theme.colors.border};
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s, transform 0.15s;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  &:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
   }
 
   &:hover {
     background-color: ${(props) => props.theme.colors.background};
     border-color: ${(props) => props.theme.colors.primary};
+    color: ${(props) => props.theme.colors.primary};
   }
 `;
 
@@ -298,7 +328,14 @@ const SettingsIcon = () => (
   </svg>
 );
 
-export const ChatSidebar = ({ isOpen, onToggle, onSettingsClick, onAPIKeysClick, onConnectionsClick }: ChatSidebarProps) => {
+const RobotIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v1a4 4 0 0 1-4 4h-1v2H7v-2H6a4 4 0 0 1-4-4v-1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2z"/>
+    <path d="M8 13v.01M16 13v.01" strokeWidth="3" strokeLinecap="round"/>
+  </svg>
+);
+
+export const ChatSidebar = ({ isOpen, onToggle, onSettingsClick, onAgentsClick, onAPIKeysClick, onConnectionsClick }: ChatSidebarProps) => {
   const { chats, activeChat, setActiveChat, addChat, removeChat, updateChat, lastUsedConnectionId } = useChatStore();
   const { getConnection } = useConnectionStore();
   const { defaultAIProvider } = useSettingsStore();
@@ -323,9 +360,13 @@ export const ChatSidebar = ({ isOpen, onToggle, onSettingsClick, onAPIKeysClick,
     setActiveChat(chatId);
   };
 
-  const handleDeleteChat = (chatId: string, e: React.MouseEvent) => {
+  const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('Delete this chat?')) {
+    const ok = await showDialog.confirm({
+      message: 'Delete this chat?',
+      variant: 'danger',
+    });
+    if (ok) {
       removeChat(chatId);
     }
   };
@@ -427,18 +468,18 @@ export const ChatSidebar = ({ isOpen, onToggle, onSettingsClick, onAPIKeysClick,
         </ChatList>
 
         <SidebarFooter>
-          <FooterButton onClick={onConnectionsClick}>
+          <FooterIconButton onClick={onConnectionsClick} data-tooltip="Connections">
             <DatabaseIcon />
-            Connections
-          </FooterButton>
-          <FooterButton onClick={onAPIKeysClick}>
+          </FooterIconButton>
+          <FooterIconButton onClick={onAgentsClick} data-tooltip="Agents">
+            <RobotIcon />
+          </FooterIconButton>
+          <FooterIconButton onClick={onAPIKeysClick} data-tooltip="API Keys">
             <KeyIcon />
-            API Keys
-          </FooterButton>
-          <FooterButton onClick={onSettingsClick}>
+          </FooterIconButton>
+          <FooterIconButton onClick={onSettingsClick} data-tooltip="Settings">
             <SettingsIcon />
-            Settings
-          </FooterButton>
+          </FooterIconButton>
         </SidebarFooter>
       </Sidebar>
 

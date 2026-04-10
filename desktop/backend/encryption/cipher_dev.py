@@ -80,6 +80,20 @@ class EncryptedDB:
                 FOREIGN KEY (connection_id) REFERENCES connections(id)
             )
         """)
+
+        # Query favorites table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS query_favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_id INTEGER,
+                title TEXT NOT NULL,
+                sql_query TEXT NOT NULL,
+                description TEXT,
+                tags TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (connection_id) REFERENCES connections(id)
+            )
+        """)
         
         self.conn.commit()
     

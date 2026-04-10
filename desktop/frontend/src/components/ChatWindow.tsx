@@ -10,10 +10,12 @@ import { ChatSidebar } from './ChatSidebar';
 import { ChatMessages } from './ChatMessages';
 import { ChatInput } from './ChatInput';
 import { Settings } from './Settings';
+import { AgentsView } from './AgentsView';
 import { ConnectionManager } from './ConnectionManager';
 import { APIKeyManager } from './APIKeyManager';
 import { analyzeExecutionPlan, ExecutionPlanAnalysis } from '../utils/executionPlanApi';
 import { showToast } from '../stores/toastStore';
+import { apiClient } from '../utils/api';
 import { withRetry, RetryPresets } from '../utils/retry';
 import { logDebug } from '../utils/errorLogger';
 import { getBackendUrl } from '../utils/portConfig';
@@ -130,6 +132,7 @@ export const ChatWindow = () => {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAgentsViewOpen, setIsAgentsViewOpen] = useState(false);
   const [isConnectionManagerOpen, setIsConnectionManagerOpen] = useState(false);
   const [isAPIKeyManagerOpen, setIsAPIKeyManagerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -142,6 +145,25 @@ export const ChatWindow = () => {
 
   const handleSelectConnection = () => {
     setIsConnectionManagerOpen(true);
+  };
+
+  const handleFavorite = async (sql: string) => {
+    const connId = currentChat?.connectionId;
+    if (!connId) {
+      showToast.warning('No connection selected — favorite saved without connection context');
+    }
+    try {
+      // Extract a short title from the first line of SQL
+      const firstLine = sql.trim().split('\n')[0].substring(0, 60);
+      await apiClient.saveFavorite({
+        connection_id: Number(connId) || 0,
+        title: firstLine,
+        sql_query: sql,
+      });
+      showToast.success('Query saved to favorites ⭐');
+    } catch (err) {
+      showToast.error('Failed to save favorite');
+    }
   };
 
   const handleRunQuery = async (sql: string) => {
@@ -475,6 +497,7 @@ export const ChatWindow = () => {
         isOpen={isSidebarOpen}
         onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
         onSettingsClick={() => setIsSettingsOpen(true)}
+        onAgentsClick={() => setIsAgentsViewOpen(true)}
         onAPIKeysClick={() => setIsAPIKeyManagerOpen(true)}
         onConnectionsClick={() => setIsConnectionManagerOpen(true)}
       />
@@ -522,6 +545,7 @@ export const ChatWindow = () => {
             <ChatMessages
               messages={currentChat.messages}
               onRunQuery={handleRunQuery}
+              onFavorite={handleFavorite}
             />
             <ChatInput chatId={currentChat.id} isAnalyzingPlan={isAnalyzingPlan} />
           </ChatArea>
@@ -533,6 +557,7 @@ export const ChatWindow = () => {
       </MainContent>
 
       <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <AgentsView isOpen={isAgentsViewOpen} onClose={() => setIsAgentsViewOpen(false)} />
       <ConnectionManager
         isOpen={isConnectionManagerOpen}
         onClose={() => setIsConnectionManagerOpen(false)}

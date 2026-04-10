@@ -228,6 +228,47 @@ class DatabaseStorage:
         """Cleanup old data"""
         self.db.cleanup_old_data(days)
 
+    # Query Favorites
+    def save_favorite(self, connection_id: int, title: str, sql_query: str, description: str = '', tags: str = '') -> int:
+        """Save a query as favorite"""
+        cursor = self.db.execute(
+            """
+            INSERT INTO query_favorites (connection_id, title, sql_query, description, tags)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (connection_id, title, sql_query, description, tags)
+        )
+        return cursor.lastrowid
+
+    def get_favorites(self, connection_id: int = None) -> List[Dict[str, Any]]:
+        """Get all favorites, optionally filtered by connection"""
+        if connection_id:
+            rows = self.db.fetchall(
+                "SELECT id, connection_id, title, sql_query, description, tags, created_at FROM query_favorites WHERE connection_id = ? ORDER BY created_at DESC",
+                (connection_id,)
+            )
+        else:
+            rows = self.db.fetchall(
+                "SELECT id, connection_id, title, sql_query, description, tags, created_at FROM query_favorites ORDER BY created_at DESC"
+            )
+
+        return [
+            {
+                'id': row[0],
+                'connection_id': row[1],
+                'title': row[2],
+                'sql_query': row[3],
+                'description': row[4] or '',
+                'tags': row[5] or '',
+                'created_at': row[6]
+            }
+            for row in rows
+        ]
+
+    def delete_favorite(self, favorite_id: int):
+        """Delete a favorite query"""
+        self.db.execute("DELETE FROM query_favorites WHERE id = ?", (favorite_id,))
+
 # Singleton instance
 _storage_instance: Optional[DatabaseStorage] = None
 
@@ -237,4 +278,3 @@ def get_storage() -> DatabaseStorage:
     if _storage_instance is None:
         _storage_instance = DatabaseStorage()
     return _storage_instance
-

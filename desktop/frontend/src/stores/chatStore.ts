@@ -11,6 +11,7 @@ export interface Message {
     columns: string[];
     rows: any[][];
   };
+  isAgentAlert?: boolean;
   timestamp: Date;
 }
 

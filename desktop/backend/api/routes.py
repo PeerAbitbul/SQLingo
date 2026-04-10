@@ -333,6 +333,113 @@ async def generate_sql(request: ChatRequest):
                     explanation=result['explanation'] + procedure_text,
                     success=True
                 )
+                
+        # Check if AI requested agent creation
+        if result.get('agent_request'):
+            action = result['agent_request'].get('action')
+            if action == 'create_agent':
+                from database.agent_storage import agent_db
+                from agent.scheduler import agent_scheduler
+                
+                agent_name = result['agent_request'].get('name', 'New SQLingo Agent')
+                agent_schedule_type = result['agent_request'].get('schedule_type', 'cron')
+                agent_schedule = result['agent_request'].get('schedule', '0 8 * * *')
+                target_query = result['agent_request'].get('query_logic', '')
+                
+                # Insert to SQLite agents.db 
+                try:
+                    agent_id = agent_db.create_agent({
+                        'name': agent_name,
+                        'connection_id': 'dynamic', # Connection managed by FE currently
+                        'schedule': f"{agent_schedule_type}:{agent_schedule}",
+                        'query_logic': target_query,
+                        'destination': 'local',
+                        'destination_config': {
+                            'connection_string': request.connection_string,
+                            'database_type': request.database_type
+                        }
+                    })
+                    
+                    # Add to APScheduler
+                    agent_scheduler.add_agent_job(agent_id, agent_schedule, schedule_type=agent_schedule_type)
+                    
+                    success_msg = f"**Agent Created Successfully**\n"
+                    success_msg += f"---\n"
+                    if agent_schedule_type == 'date':
+                        success_msg += f"- **Name:** {agent_name}\n- **Runs Once At:** `{agent_schedule}`\n- **Destination:** Local Chat Inbox\n\n"
+                    else:
+                        success_msg += f"- **Name:** {agent_name}\n- **Schedule:** `{agent_schedule}` (Cron format)\n- **Destination:** Local Chat Inbox\n\n"
+                    success_msg += f"> Target Query:\n"
+                    success_msg += f"```sql\n{target_query}\n```\n"
+
+                    return ChatResponse(
+                        sql_query='',
+                        explanation=success_msg,
+                        success=True
+                    )
+                except Exception as e:
+                    return ChatResponse(
+                        sql_query='',
+                        explanation=f"Failed to create agent: {str(e)}",
+                        success=False
+                    )
+
+        # Check if AI requested an immediate analysis
+        if result.get('analysis_request'):
+            action = result['analysis_request'].get('action')
+            if action == 'analyze_now':
+                query_logic = result['analysis_request'].get('query_logic', '')
+                try:
+                    # Execute the query immediately (limit to 50 to avoid blowing up context window)
+                    query_result = db.execute_select(query_logic, limit=50)
+                    
+                    # Convert to string
+                    cols = query_result.get('columns', [])
+                    rows = query_result.get('rows', [])
+                    
+                    if not rows:
+                        data_str = "No results found for this scan."
+                    else:
+                        data_str = " | ".join(cols) + "\n"
+                        for row in rows:
+                            data_str += " | ".join([str(val) for val in row]) + "\n"
+                    
+                    if len(data_str) > 3000:
+                        data_str = data_str[:3000] + "\n... (truncated to fit context token limits)"
+                    
+                    # Frame the second prompt
+                    second_prompt = (
+                        f"My original request was: '{request.question}'.\n"
+                        f"You decided to run a background diagnostic query: \n{query_logic}\n\n"
+                        f"Here are the live results from the database:\n"
+                        f"---\n{data_str}\n---\n\n"
+                        f"Review these results and answer my original request directly. DO NOT output JSON or another tool request. "
+                        f"Reply with a conversational explanation and your professional recommendations. "
+                        f"If an action is required, you can include the SQL to fix the issue in a standard sql codeblock."
+                    )
+                    
+                    second_result = ai_client.generate_sql(
+                        question=second_prompt,
+                        schema="[Schema context omitted for brevity to save tokens during analysis phase]",
+                        database_type=request.database_type,
+                        model=request.ai_model,
+                        conversation_history=history
+                    )
+                    
+                    return ChatResponse(
+                        sql_query=second_result.get('sql', ''),
+                        explanation=f"**Live Analysis Complete** ⚡\n---\n*The AI independently ran a background diagnostic query based on your request:*\n> `{query_logic.replace(chr(10), ' ')}`\n\n{second_result.get('explanation', '')}",
+                        success=True
+                    )
+
+                except Exception as e:
+                    return ChatResponse(
+                        sql_query='',
+                        explanation=f"Failed to execute immediate background analysis: {str(e)}\n\nQuery tried:\n```sql\n{query_logic}\n```",
+                        success=False
+                    )
+
+        # Normal Response
         return ChatResponse(
             sql_query=result['sql'],
             explanation=result['explanation'],
@@ -1082,6 +1189,47 @@ async def get_database_info(request: DatabaseInfoRequest):
             success=False,
             error=str(e)
         )
+
+
+# ── Query Favorites ────────────────────────────────
+
+class SaveFavoriteRequest(BaseModel):
+    connection_id: int
+    title: str
+    sql_query: str
+    description: str = ''
+    tags: str = ''
+
+@router.post("/favorites")
+async def save_favorite(request: SaveFavoriteRequest):
+    """Save a SQL query as a favorite"""
+    from database.storage import get_storage
+    storage = get_storage()
+    fav_id = storage.save_favorite(
+        connection_id=request.connection_id,
+        title=request.title,
+        sql_query=request.sql_query,
+        description=request.description,
+        tags=request.tags
+    )
+    return {"success": True, "id": fav_id}
+
+@router.get("/favorites")
+async def get_favorites(connection_id: int = None):
+    """Get all favorites, optionally filtered by connection"""
+    from database.storage import get_storage
+    storage = get_storage()
+    favorites = storage.get_favorites(connection_id=connection_id)
+    return {"success": True, "favorites": favorites}
+
+@router.delete("/favorites/{favorite_id}")
+async def delete_favorite(favorite_id: int):
+    """Delete a favorite query"""
+    from database.storage import get_storage
+    storage = get_storage()
+    storage.delete_favorite(favorite_id)
+    return {"success": True}
+
 
 
 

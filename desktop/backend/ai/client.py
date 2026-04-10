@@ -98,6 +98,7 @@ class AIClient:
             'sql': parsed['sql'],  # Extracted SQL with header or empty
             'explanation': parsed['explanation'] or response.content,  # Explanation or full response
             'procedure_request': parsed.get('procedure_request'),  # Procedure request if present
+            'agent_request': parsed.get('agent_request'),  # Agent creation request if present
             'tokens_prompt': response.tokens_prompt,
             'tokens_completion': response.tokens_completion,
             'tokens_total': response.tokens_total,
@@ -162,8 +163,12 @@ class AIClient:
                 context += f"{role}: {msg['content']}\n"
             context += "\n"
 
+        from datetime import datetime
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         return f"""You are a helpful database assistant. Answer questions about databases and SQL.
 
+Current Server Date and Time: {current_time}
 Current database: {database_type}
 
 Database Schema:
@@ -278,9 +283,53 @@ SELECT
     collation_name AS Collation
 FROM sys.databases
 WHERE name = DB_NAME();
+```sql
+SELECT
+    DB_NAME() AS DatabaseName,
+    SUSER_SNAME(owner_sid) AS DatabaseOwner,
+    create_date AS CreatedDate,
+    collation_name AS Collation
+FROM sys.databases
+WHERE name = DB_NAME();
 ```
 
-7. When generating SELECT queries:
+7. **CRITICAL SYSTEM DIRECTIVE: AGENT BUILDER**
+   - WHEN THE USER ASKS TO SCHEDULE A JOB, SET AN ALERT, OR CREATE A BACKGROUND AGENT (e.g., "send me a report every 30 seconds", "create an agent for 5 minutes from now"), YOU ARE FORBIDDEN FROM ENGAGING IN CONVERSATION.
+   - YOU MUST OUTPUT **ONLY** A SINGLE MARKDOWN JSON BLOCK, EXACTLY AS SHOWN BELOW, AND ABSOLUTELY **NOTHING ELSE** (NO greetings, NO text above, NO text below, NO SQL blocks).
+   - If you output anything other than this exact block, the system will crash.
+
+```agent-request
+{{
+  "action": "create_agent",
+  "name": "Meaningful name for the job",
+  "schedule_type": "date", 
+  "schedule": "YYYY-MM-DD HH:MM:SS", 
+  "query_logic": "SELECT count(*) FROM errors WHERE date > CAST(GETDATE()-1 AS DATE)", 
+  "destination": "local"
+}}
+```
+   - "schedule_type": Must be "cron" for repeating/interval jobs, or "date" for one-time executions in the future.
+   - "schedule": A 5-part or 6-part cron string if "cron" (e.g. `*/30 * * * * *` for every 30 secs), OR absolute future timestamp (YYYY-MM-DD HH:MM:SS) if "date". Calculate based on "Current Server Date and Time".
+   - "query_logic": The raw SELECT query.
+
+**EXAMPLES OF SCHEDULE TYPES:**
+To run EVERY 30 seconds (repeating): `"schedule_type": "cron", "schedule": "*/30 * * * * *"`
+To run EVERY day at 8 AM (repeating): `"schedule_type": "cron", "schedule": "0 8 * * *"`
+To run exactly ONCE in 5 minutes: Calculate current time + 5 mins, `"schedule_type": "date", "schedule": "2026-04-06 06:45:00"`
+
+8. **CRITICAL SYSTEM DIRECTIVE: IMMEDIATE ANALYSIS LOOP**
+   - WHEN THE USER EXPLICITLY ASKS YOU TO *ANALYZE*, *EVALUATE*, or *CHECK* SOMETHING **RIGHT NOW** and give them your conclusions directly (e.g. "Check fragmentation right now and tell me what you think", "Can you scan the system for performance issues?").
+   - YOU MUST OUTPUT **ONLY** A SINGLE MARKDOWN JSON BLOCK, EXACTLY AS SHOWN BELOW, AND ABSOLUTELY **NOTHING ELSE**.
+   - This will instruct the system to silently run the query and feed you the results for you to analyze.
+
+```analysis-request
+{{
+  "action": "analyze_now",
+  "query_logic": "SELECT ... FROM ... /* write the scan query here */"
+}}
+```
+
+9. When generating SELECT queries (NOT AGENTS AND NOT ANALYSIS):
    - ALWAYS limit results to 100 rows for performance
    - For SQL Server: Use "SELECT TOP 100"
    - For PostgreSQL/MySQL: Use "LIMIT 100" at the end
@@ -290,7 +339,7 @@ WHERE name = DB_NAME();
    - DO NOT add comments inside the SQL code block (we'll add them automatically)
    - EXCEPTION: Database insights scripts SHOULD include comments for interpretation guidance
 
-8. Current database uses: {limit_syntax}
+10. Current database uses: {limit_syntax}
 
 Example response format for {database_type}:
 Here's a query to get users:
@@ -312,6 +361,47 @@ User: {question}
         sql = ""
         explanation = ""
         procedure_request = None
+        agent_request = None
+        analysis_request = None
+
+        # Check for analysis request
+        analysis_pattern = r'```analysis-request\s*(.*?)\s*```'
+        analysis_matches = re.findall(analysis_pattern, response, re.DOTALL | re.IGNORECASE)
+
+        if analysis_matches:
+            import json
+            try:
+                analysis_request = json.loads(analysis_matches[0].strip())
+            except:
+                pass
+            explanation = re.sub(analysis_pattern, '', response, flags=re.DOTALL | re.IGNORECASE).strip()
+            
+            return {
+                'sql': '',
+                'explanation': explanation or "Analyzing...",
+                'procedure_request': None,
+                'agent_request': None,
+                'analysis_request': analysis_request
+            }
+
+        # Check for agent request
+        agent_pattern = r'```agent-request\s*(.*?)\s*```'
+        agent_matches = re.findall(agent_pattern, response, re.DOTALL | re.IGNORECASE)
+
+        if agent_matches:
+            import json
+            try:
+                agent_request = json.loads(agent_matches[0].strip())
+            except:
+                pass
+            explanation = re.sub(agent_pattern, '', response, flags=re.DOTALL | re.IGNORECASE).strip()
+            
+            return {
+                'sql': '',
+                'explanation': explanation or "Creating agent...",
+                'procedure_request': None,
+                'agent_request': agent_request
+            }
 
         # Check for procedure request
         procedure_pattern = r'```procedure-request\s*(.*?)\s*```'
@@ -369,7 +459,8 @@ User: {question}
         return {
             'sql': sql,
             'explanation': explanation or "Response generated successfully",
-            'procedure_request': procedure_request
+            'procedure_request': procedure_request,
+            'agent_request': None
         }
 
 

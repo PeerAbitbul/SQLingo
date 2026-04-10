@@ -11,7 +11,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router
 from api.ollama_routes import router as ollama_router
+from api.agent_routes import router as agent_router
 from startup import init_on_startup
+from agent.scheduler import agent_scheduler  # Import our new Agent Scheduler
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -90,6 +92,17 @@ app.add_middleware(
 # Include API routes
 app.include_router(router, prefix="/api")
 app.include_router(ollama_router, prefix="/api/ollama")
+app.include_router(agent_router, prefix="/api/agents")
+
+@app.on_event("startup")
+async def startup_event():
+    # Start the background job scheduler
+    agent_scheduler.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if agent_scheduler.scheduler:
+        agent_scheduler.scheduler.shutdown()
 
 @app.get("/")
 async def root():

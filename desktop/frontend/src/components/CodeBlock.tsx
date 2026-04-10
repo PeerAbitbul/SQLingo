@@ -5,6 +5,7 @@ interface CodeBlockProps {
   code: string;
   language: string;
   onRun?: () => void;
+  onFavorite?: (sql: string) => void;
 }
 
 const Container = styled.div`
@@ -65,6 +66,15 @@ const RunButton = styled(Button)`
   }
 `;
 
+const StarButton = styled(Button)<{ $saved?: boolean }>`
+  color: ${(props) => props.$saved ? '#f59e0b' : props.theme.colors.textSecondary};
+  font-size: 14px;
+
+  &:hover {
+    color: #f59e0b;
+  }
+`;
+
 const CodeContent = styled.pre`
   margin: 0;
   padding: ${(props) => props.theme.spacing.md};
@@ -84,8 +94,9 @@ const CodeContent = styled.pre`
   }
 `;
 
-export const CodeBlock = ({ code, language, onRun }: CodeBlockProps) => {
+export const CodeBlock = ({ code, language, onRun, onFavorite }: CodeBlockProps) => {
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const handleCopy = async () => {
     try {
@@ -108,8 +119,15 @@ export const CodeBlock = ({ code, language, onRun }: CodeBlockProps) => {
         setTimeout(() => setCopied(false), 2000);
       } catch (fallbackError) {
         console.error('Failed to copy to clipboard:', fallbackError);
-        // Could show toast error here
       }
+    }
+  };
+
+  const handleFavorite = () => {
+    if (onFavorite) {
+      onFavorite(code);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     }
   };
 
@@ -121,6 +139,11 @@ export const CodeBlock = ({ code, language, onRun }: CodeBlockProps) => {
           <Button onClick={handleCopy}>
             {copied ? 'Copied!' : 'Copy'}
           </Button>
+          {onFavorite && language.toLowerCase() === 'sql' && (
+            <StarButton onClick={handleFavorite} $saved={saved}>
+              {saved ? '★ Saved!' : '☆ Save'}
+            </StarButton>
+          )}
           {onRun && language.toLowerCase() === 'sql' && (
             <RunButton onClick={onRun}>
               Run Query

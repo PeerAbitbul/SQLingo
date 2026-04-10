@@ -6,6 +6,7 @@ import { MessageItem } from './MessageItem';
 interface ChatMessagesProps {
   messages: Message[];
   onRunQuery?: (sql: string) => void;
+  onFavorite?: (sql: string) => void;
 }
 
 const MessagesContainer = styled.div`
@@ -26,7 +27,7 @@ const MessagesContainer = styled.div`
   }
 `;
 
-export const ChatMessages = ({ messages, onRunQuery }: ChatMessagesProps) => {
+export const ChatMessages = ({ messages, onRunQuery, onFavorite }: ChatMessagesProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -44,6 +45,7 @@ export const ChatMessages = ({ messages, onRunQuery }: ChatMessagesProps) => {
           key={message.id}
           message={message}
           onRunQuery={onRunQuery}
+          onFavorite={onFavorite}
         />
       ))}
       <div ref={messagesEndRef} />

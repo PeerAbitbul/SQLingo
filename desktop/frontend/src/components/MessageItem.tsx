@@ -9,6 +9,7 @@ import { QueryResults } from './QueryResults';
 interface MessageItemProps {
   message: Message;
   onRunQuery?: (sql: string) => void;
+  onFavorite?: (sql: string) => void;
 }
 
 const MessageContainer = styled.div<{ $isUser: boolean }>`
@@ -18,13 +19,16 @@ const MessageContainer = styled.div<{ $isUser: boolean }>`
   gap: ${(props) => props.theme.spacing.xs};
 `;
 
-const MessageBubble = styled.div<{ $isUser: boolean }>`
+const MessageBubble = styled.div<{ $isUser: boolean; $isAgentAlert?: boolean }>`
   max-width: 80%;
   padding: ${(props) => props.theme.spacing.sm} ${(props) => props.theme.spacing.md};
   background-color: ${(props) =>
-    props.$isUser ? props.theme.colors.primary : props.theme.colors.surface};
+    props.$isUser ? props.theme.colors.primary : 
+    props.$isAgentAlert ? 'rgba(156, 39, 176, 0.15)' : 
+    props.theme.colors.surface};
   color: ${(props) =>
     props.$isUser ? '#ffffff' : props.theme.colors.text};
+  border: ${(props) => props.$isAgentAlert ? '1px solid rgba(156, 39, 176, 0.4)' : 'none'};
   border-radius: ${(props) => props.theme.borderRadius.md};
   font-size: 14px;
   line-height: 1.5;
@@ -151,12 +155,12 @@ const Timestamp = styled.span`
   color: ${(props) => props.theme.colors.textSecondary};
 `;
 
-export const MessageItem = ({ message, onRunQuery }: MessageItemProps) => {
+export const MessageItem = ({ message, onRunQuery, onFavorite }: MessageItemProps) => {
   const isUser = message.role === 'user';
 
   return (
     <MessageContainer $isUser={isUser}>
-      <MessageBubble $isUser={isUser}>
+      <MessageBubble $isUser={isUser} $isAgentAlert={message.isAgentAlert}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSanitize]}
@@ -169,6 +173,7 @@ export const MessageItem = ({ message, onRunQuery }: MessageItemProps) => {
           code={message.sqlQuery}
           language="sql"
           onRun={onRunQuery ? () => onRunQuery(message.sqlQuery!) : undefined}
+          onFavorite={onFavorite}
         />
       )}
       {message.queryResults && (

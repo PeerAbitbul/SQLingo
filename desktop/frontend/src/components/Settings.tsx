@@ -6,6 +6,8 @@ import { useChatStore } from '../stores/chatStore';
 import { useOllamaStore } from '../stores/ollamaStore';
 import { OllamaManager } from './OllamaManager';
 import errorLogger from '../utils/errorLogger';
+import { showDialog } from '../stores/dialogStore';
+import { showToast } from '../stores/toastStore';
 
 interface SettingsProps {
   isOpen: boolean;
@@ -248,15 +250,18 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
     }
   };
 
-  const handleClearHistory = () => {
+  const handleClearHistory = async () => {
     if (chats.length === 0) {
-      alert('No chat history to clear.');
+      await showDialog.alert({ message: 'No chat history to clear.' });
       return;
     }
-    if (confirm(`Are you sure you want to clear all ${chats.length} chat(s)? This cannot be undone.`)) {
-      // Remove all chats from the store
+    const ok = await showDialog.confirm({
+      message: `Are you sure you want to clear all ${chats.length} chat(s)? This cannot be undone.`,
+      variant: 'danger',
+    });
+    if (ok) {
       chats.forEach(chat => removeChat(chat.id));
-      alert('Chat history cleared!');
+      showToast.success('Chat history cleared!');
     }
   };
 
@@ -408,7 +413,7 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
               </SettingLabel>
               <DangerButton onClick={() => {
                 errorLogger.clearLogs();
-                alert('Error logs cleared');
+                showToast.success('Error logs cleared');
               }}>
                 Clear Logs
               </DangerButton>

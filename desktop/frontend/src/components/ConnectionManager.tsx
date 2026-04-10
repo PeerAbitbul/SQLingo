@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useConnectionStore, Connection } from '../stores/connectionStore';
 import { useTestConnection } from '../hooks/useAPI';
 import { showToast } from '../stores/toastStore';
+import { showDialog } from '../stores/dialogStore';
 import { InlineLoading } from './Loading';
 import { withRetry, RetryPresets } from '../utils/retry';
 
@@ -349,9 +350,13 @@ export const ConnectionManager = ({ isOpen, onClose, onSelectConnection }: Conne
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const connection = connections.find((c) => c.id === id);
-    if (confirm('Are you sure you want to delete this connection?')) {
+    const ok = await showDialog.confirm({
+      message: 'Are you sure you want to delete this connection?',
+      variant: 'danger',
+    });
+    if (ok) {
       try {
         removeConnection(id);
         showToast.success(`Connection "${connection?.name || 'Unknown'}" deleted`);

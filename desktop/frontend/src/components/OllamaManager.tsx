@@ -3,6 +3,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useOllamaStore } from '../stores/ollamaStore';
 import { fetchOllamaStatus, fetchCatalog, fetchInstalled, pullModel, deleteModel } from '../utils/ollamaApi';
 import { showToast } from '../stores/toastStore';
+import { showDialog } from '../stores/dialogStore';
 import { OllamaInstallGuide } from './OllamaInstallGuide';
 import { OllamaModelCard } from './OllamaModelCard';
 
@@ -154,7 +155,11 @@ export const OllamaManager = () => {
   // ── Delete handler ────────────────────────────────────────────────
   const handleDelete = useCallback(
     async (modelId: string) => {
-      if (!confirm(`Delete ${modelId}? You can re-install it later.`)) return;
+      const ok = await showDialog.confirm({
+        message: `Delete ${modelId}? You can re-install it later.`,
+        variant: 'danger',
+      });
+      if (!ok) return;
       try {
         await deleteModel(modelId, store.baseUrl);
         showToast.success(`${modelId} deleted`);

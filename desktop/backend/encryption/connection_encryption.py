@@ -18,7 +18,10 @@ class ConnectionEncryption:
             master_key: Machine-specific key from EncryptedDB
         """
         # Derive Fernet key from master key
-        key_bytes = hashlib.sha256(master_key.encode()).digest()
+        if isinstance(master_key, bytes):
+            key_bytes = hashlib.sha256(master_key).digest()
+        else:
+            key_bytes = hashlib.sha256(master_key.encode()).digest()
         self.fernet_key = base64.urlsafe_b64encode(key_bytes)
         self.cipher = Fernet(self.fernet_key)
     

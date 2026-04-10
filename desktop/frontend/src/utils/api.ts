@@ -93,11 +93,35 @@ export interface GenerateTitleResponse {
   error?: string;
 }
 
+export interface AgentData {
+  id: string;
+  name: string;
+  connection_id: string;
+  schedule: string;
+  query_logic: string;
+  destination: string;
+  is_active: boolean;
+  created_at: string;
+  last_run_at: string | null;
+  last_status: string | null;
+}
 
+export interface AgentRunLog {
+  id: string;
+  agent_id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  row_count: number;
+  summary: string | null;
+  error_message: string | null;
+}
 
-
-
-
+export interface GetAllAgentsResponse {
+  success: boolean;
+  agents: AgentData[];
+  master_paused: boolean;
+}
 class APIClient {
   private async getBaseUrl(): Promise<string> {
     // Always get the latest backend URL
@@ -188,6 +212,63 @@ class APIClient {
     const healthUrl = getBaseUrlFromApiUrl(baseUrl) + '/health';
     const response = await fetch(healthUrl);
     return response.json();
+  }
+
+  async getAgentMessages(): Promise<{ success: boolean, messages: any[] }> {
+    return this.request<{ success: boolean, messages: any[] }>('/agents/messages');
+  }
+
+  async markAgentMessagesRead(messageIds: string[]): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>('/agents/messages/mark-read', {
+      method: 'POST',
+      body: JSON.stringify({ message_ids: messageIds }),
+    });
+  }
+
+  async getAllAgents(): Promise<GetAllAgentsResponse> {
+    return this.request<GetAllAgentsResponse>('/agents/');
+  }
+
+  async toggleAgentMaster(active: boolean): Promise<{ success: boolean, master_paused: boolean }> {
+    return this.request<{ success: boolean, master_paused: boolean }>('/agents/toggle-master', {
+      method: 'POST',
+      body: JSON.stringify({ active }),
+    });
+  }
+
+  async toggleAgent(agentId: string, active: boolean): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/agents/${agentId}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ active }),
+    });
+  }
+
+  async deleteAgent(agentId: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/agents/${agentId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getAgentRuns(agentId: string, limit: number = 10): Promise<{ success: boolean, runs: AgentRunLog[] }> {
+    return this.request<{ success: boolean, runs: AgentRunLog[] }>(`/agents/${agentId}/runs?limit=${limit}`);
+  }
+
+  async saveFavorite(data: { connection_id: number, title: string, sql_query: string, description?: string, tags?: string }): Promise<{ success: boolean, id: number }> {
+    return this.request<{ success: boolean, id: number }>('/favorites', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getFavorites(connectionId?: number): Promise<{ success: boolean, favorites: any[] }> {
+    const url = connectionId ? `/favorites?connection_id=${connectionId}` : '/favorites';
+    return this.request<{ success: boolean, favorites: any[] }>(url);
+  }
+
+  async deleteFavorite(favoriteId: number): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/favorites/${favoriteId}`, {
+      method: 'DELETE',
+    });
   }
 
 }

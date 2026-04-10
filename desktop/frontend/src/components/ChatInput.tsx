@@ -227,7 +227,8 @@ const CommandDesc = styled.div`
 const SLASH_COMMANDS = [
   { cmd: '/permission mssql', desc: 'Show MSSQL minimum permissions' },
   { cmd: '/permission postgres', desc: 'Show PostgreSQL minimum permissions' },
-  { cmd: '/permission mysql', desc: 'Show MySQL minimum permissions' }
+  { cmd: '/permission mysql', desc: 'Show MySQL minimum permissions' },
+  { cmd: '/telegram', desc: 'How to setup a Telegram Bot for alerts' }
 ];
 
 export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: ChatInputProps) => {
@@ -475,6 +476,26 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
       } else {
         responseContent = `Unknown database type: **${dbType}**. Please use \`mssql\`, \`postgres\`, or \`mysql\`.`;
       }
+
+      addMessage(chatId, {
+        id: uuidv4(),
+        role: 'assistant',
+        content: responseContent,
+        timestamp: new Date(),
+      });
+      return;
+    }
+    
+    if (command === '/telegram') {
+      const responseContent = `### 🤖 Telegram Bot Setup Guide
+To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegram Bot. It takes 1 minute:
+
+1. Open Telegram and search for the official **@BotFather**.
+2. Send the message \`/newbot\` and give it a name to receive your **HTTP API Token**.
+3. Search for **@userinfobot** (or forward a message to @getidsbot) to find your personal numeric **Chat ID**.
+4. *(Coming Soon)* You will be able to paste these details directly into the "Create Agent" panel.
+
+*Keep your token private!*`;
 
       addMessage(chatId, {
         id: uuidv4(),
