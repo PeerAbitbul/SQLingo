@@ -77,7 +77,6 @@ class OpenAIProvider(AIProviderBase):
             tokens_completion = usage.completion_tokens
             tokens_total = usage.total_tokens
             latency_ms = self._measure_latency(start_time)
-            cost_usd = self.calculate_cost(tokens_prompt, tokens_completion, params["model"])
             
             return ChatResponse(
                 content=message.content,
@@ -86,7 +85,6 @@ class OpenAIProvider(AIProviderBase):
                 tokens_prompt=tokens_prompt,
                 tokens_completion=tokens_completion,
                 tokens_total=tokens_total,
-                cost_usd=cost_usd,
                 latency_ms=latency_ms,
                 finish_reason=response.choices[0].finish_reason,
                 request_id=response.id,

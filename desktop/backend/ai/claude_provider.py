@@ -92,7 +92,6 @@ class ClaudeProvider(AIProviderBase):
             tokens_completion = response.usage.output_tokens
             tokens_total = tokens_prompt + tokens_completion
             latency_ms = self._measure_latency(start_time)
-            cost_usd = self.calculate_cost(tokens_prompt, tokens_completion, params["model"])
             
             return ChatResponse(
                 content=content,
@@ -101,7 +100,6 @@ class ClaudeProvider(AIProviderBase):
                 tokens_prompt=tokens_prompt,
                 tokens_completion=tokens_completion,
                 tokens_total=tokens_total,
-                cost_usd=cost_usd,
                 latency_ms=latency_ms,
                 finish_reason=response.stop_reason,
                 request_id=response.id,

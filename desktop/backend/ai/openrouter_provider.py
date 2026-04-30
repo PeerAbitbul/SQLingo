@@ -57,7 +57,6 @@ class OpenRouterProvider(AIProviderBase):
                 tokens_prompt=tokens_prompt,
                 tokens_completion=tokens_completion,
                 tokens_total=tokens_total,
-                cost_usd=0.0,  # pricing varies per model; skip for now
                 latency_ms=latency_ms,
             )
         except OpenAIError as e:

@@ -103,7 +103,7 @@ class AIClient:
             'tokens_prompt': response.tokens_prompt,
             'tokens_completion': response.tokens_completion,
             'tokens_total': response.tokens_total,
-            'cost_usd': response.cost_usd,
+
             'latency_ms': response.latency_ms,
             'model': response.model,
             'provider': response.provider

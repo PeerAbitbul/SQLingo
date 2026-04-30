@@ -33,7 +33,6 @@ class ChatResponse:
     tokens_prompt: int
     tokens_completion: int
     tokens_total: int
-    cost_usd: float
     latency_ms: int
     finish_reason: Optional[str] = None
     request_id: Optional[str] = None
@@ -79,28 +78,6 @@ class AIProviderBase(ABC):
             List of model names
         """
         pass
-    
-    def calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
-        """
-        Calculate cost for token usage.
-        Override this in subclasses with provider-specific pricing.
-        
-        Args:
-            input_tokens: Number of input tokens
-            output_tokens: Number of output tokens
-            model: Model name
-            
-        Returns:
-            Cost in USD
-        """
-        # Default pricing (override in subclasses)
-        cost_per_1m_input = 0.50  # $0.50 per 1M input tokens
-        cost_per_1m_output = 1.50  # $1.50 per 1M output tokens
-        
-        input_cost = (input_tokens / 1_000_000) * cost_per_1m_input
-        output_cost = (output_tokens / 1_000_000) * cost_per_1m_output
-        
-        return round(input_cost + output_cost, 6)
     
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, str]]:
         """

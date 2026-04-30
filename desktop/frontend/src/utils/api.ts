@@ -59,7 +59,6 @@ export interface ChatResponse {
   explanation: string;
   success: boolean;
   error?: string;
-  usage_warning?: 'approaching_limit' | 'limit_reached' | null;
 }
 
 export interface QueryExecuteRequest {

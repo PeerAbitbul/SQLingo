@@ -121,7 +121,6 @@ class GeminiProvider(AIProviderBase):
             
             # Calculate metrics
             latency_ms = self._measure_latency(start_time)
-            cost_usd = self.calculate_cost(tokens_prompt, tokens_completion, model)
             
             return ChatResponse(
                 content=content,
@@ -130,7 +129,6 @@ class GeminiProvider(AIProviderBase):
                 tokens_prompt=tokens_prompt,
                 tokens_completion=tokens_completion,
                 tokens_total=tokens_total,
-                cost_usd=cost_usd,
                 latency_ms=latency_ms,
                 finish_reason=finish_reason,
                 request_id=None,

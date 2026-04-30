@@ -90,7 +90,6 @@ class OllamaProvider(AIProviderBase):
                 tokens_prompt=tokens_prompt,
                 tokens_completion=tokens_completion,
                 tokens_total=tokens_total,
-                cost_usd=0.0,  # Local inference is free
                 latency_ms=latency_ms,
                 finish_reason=data.get("done_reason", "stop"),
                 request_id=None,
