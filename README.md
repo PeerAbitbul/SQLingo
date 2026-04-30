@@ -20,14 +20,14 @@ SQLingo is a free desktop application that lets you write natural language quest
 ## Features
 
 ### AI Providers
-| Provider | Models |
-|----------|--------|
-| **OpenAI** | GPT-4o, GPT-4o-mini, and more |
-| **Anthropic** | Claude 3.5 Sonnet, Claude 3 Haiku |
-| **Google** | Gemini 2.0 Flash, Gemini 1.5 Pro |
+| Provider | Notes |
+|----------|-------|
+| **OpenAI** | Any GPT model — enter the model name you want |
+| **Anthropic** | Any Claude model — enter the model name you want |
+| **Google** | Any Gemini model — enter the model name you want |
 | **AWS Bedrock** | Claude via direct AWS integration |
 | **OpenRouter** | 100+ models via a single API key |
-| **Ollama** | Llama 3, Mistral, Gemma, Qwen, Phi-4 — fully offline |
+| **Ollama** | Llama, Mistral, Gemma, Qwen, Phi and more — fully offline |
 
 ### Database Support
 - **PostgreSQL**, **MySQL / MariaDB**, **SQL Server**
