@@ -77,6 +77,7 @@ def _create_insights_prompt(analysis: Dict[str, Any], statement: str) -> str:
         if sql:
             missing_index_sqls.append(sql)
     index_sql_block = '\n\n'.join(f"```sql\n{s}\n```" for s in missing_index_sqls) if missing_index_sqls else ''
+    index_sql_section = ('**Suggested CREATE INDEX statements:**\n' + index_sql_block) if index_sql_block else ''
 
     prompt = f"""You are a SQL Server performance expert. Analyze this execution plan and provide deep, actionable insights with concrete code.
 
@@ -96,7 +97,7 @@ def _create_insights_prompt(analysis: Dict[str, Any], statement: str) -> str:
 
 **Missing Indexes (auto-detected by SQL Server):**
 {missing_indexes_text}
-{('**Suggested CREATE INDEX statements:**\n' + index_sql_block) if index_sql_block else ''}
+{index_sql_section}
 
 **Top Expensive Operations:**
 {expensive_ops_text}
