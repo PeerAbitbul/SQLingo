@@ -325,7 +325,7 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
               onChange={(e) => setDefaultAIProvider(e.target.value as any)}
             >
               <option value="claude">Claude (Anthropic)</option>
-              <option value="openai">GPT-4 (OpenAI)</option>
+              <option value="openai">OpenAI</option>
               <option value="gemini">Gemini (Google)</option>
               {ollamaModels.length > 0 && (
                 <option value="ollama">Ollama (Local)</option>

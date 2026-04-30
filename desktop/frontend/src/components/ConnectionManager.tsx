@@ -233,9 +233,10 @@ const DEFAULT_PORTS = {
 };
 
 export const ConnectionManager = ({ isOpen, onClose, onSelectConnection }: ConnectionManagerProps) => {
-  const { connections, activeConnection, addConnection, removeConnection, buildConnectionString } =
+  const { connections, activeConnection, addConnection, removeConnection, updateConnection, buildConnectionString } =
     useConnectionStore();
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     databaseType: 'sqlserver' as 'sqlserver' | 'postgresql' | 'mysql',
@@ -261,8 +262,23 @@ export const ConnectionManager = ({ isOpen, onClose, onSelectConnection }: Conne
     });
   };
 
+  const handleEdit = (conn: Connection) => {
+    setEditingId(conn.id);
+    setFormData({
+      name: conn.name,
+      databaseType: conn.databaseType,
+      host: conn.host,
+      port: conn.port,
+      database: conn.database,
+      username: conn.username,
+      password: conn.password,
+    });
+    setShowForm(true);
+  };
+
   const handleCancel = () => {
     setShowForm(false);
+    setEditingId(null);
     setFormData({
       name: '',
       databaseType: 'sqlserver',
@@ -324,26 +340,35 @@ export const ConnectionManager = ({ isOpen, onClose, onSelectConnection }: Conne
     }
 
     try {
-      const newConnection: Connection = {
-        id: Date.now().toString(),
-        name: formData.name.trim(),
-        databaseType: formData.databaseType,
-        host: formData.host.trim(),
-        port: portNum,
-        database: formData.database.trim(),
-        username: formData.username.trim(),
-        password: formData.password, // Keep password as-is
-        createdAt: new Date(),
-      };
-
-      addConnection(newConnection);
-      showToast.success(`Connection "${formData.name}" saved successfully`);
-
-      // If onSelectConnection is provided, call it with the new connection ID
-      if (onSelectConnection) {
-        onSelectConnection(newConnection.id);
+      if (editingId) {
+        updateConnection(editingId, {
+          name: formData.name.trim(),
+          databaseType: formData.databaseType,
+          host: formData.host.trim(),
+          port: portNum,
+          database: formData.database.trim(),
+          username: formData.username.trim(),
+          password: formData.password,
+        });
+        showToast.success(`Connection "${formData.name}" updated`);
+      } else {
+        const newConnection: Connection = {
+          id: Date.now().toString(),
+          name: formData.name.trim(),
+          databaseType: formData.databaseType,
+          host: formData.host.trim(),
+          port: portNum,
+          database: formData.database.trim(),
+          username: formData.username.trim(),
+          password: formData.password,
+          createdAt: new Date(),
+        };
+        addConnection(newConnection);
+        showToast.success(`Connection "${formData.name}" saved successfully`);
+        if (onSelectConnection) {
+          onSelectConnection(newConnection.id);
+        }
       }
-
       handleCancel();
     } catch (error: any) {
       showToast.error(`Error saving connection: ${error?.message || error}`);
@@ -394,13 +419,13 @@ export const ConnectionManager = ({ isOpen, onClose, onSelectConnection }: Conne
                 <ConnectionActions onClick={(e) => e.stopPropagation()}>
                   <SmallButton
                     onClick={() => {
-                      // Only call onSelectConnection, don't set global activeConnection
-                      if (onSelectConnection) {
-                        onSelectConnection(conn.id);
-                      }
+                      if (onSelectConnection) onSelectConnection(conn.id);
                     }}
                   >
                     Select
+                  </SmallButton>
+                  <SmallButton onClick={() => handleEdit(conn)}>
+                    Edit
                   </SmallButton>
                   <DeleteButton onClick={() => handleDelete(conn.id)}>
                     Delete
@@ -417,6 +442,9 @@ export const ConnectionManager = ({ isOpen, onClose, onSelectConnection }: Conne
 
         {showForm && (
           <Form>
+            <Label style={{ fontSize: 15, fontWeight: 600 }}>
+              {editingId ? 'Edit Connection' : 'New Connection'}
+            </Label>
             <FormGroup>
               <Label>Connection Name</Label>
               <Input
