@@ -145,6 +145,20 @@ class DatabaseConnection:
         except Exception as e:
             raise Exception(f"Query execution failed: {str(e)}")
     
+    def execute_action(self, query: str) -> Dict[str, Any]:
+        """
+        Execute a write query (INSERT, UPDATE, DELETE, EXEC, CALL) with proper commit.
+        Returns affected row count and success status.
+        """
+        try:
+            engine = self._get_engine()
+            with engine.begin() as conn:  # auto-commit on success, rollback on exception
+                result = conn.execute(text(query))
+                affected = result.rowcount if result.rowcount is not None else 0
+            return {'success': True, 'affected_rows': affected}
+        except Exception as e:
+            raise Exception(f"Action execution failed: {str(e)}")
+
     def get_tables(self) -> List[str]:
         """Get list of all tables in database"""
         try:

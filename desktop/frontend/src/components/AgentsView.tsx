@@ -190,6 +190,23 @@ const MetaValue = styled.div`
   word-break: break-all;
 `;
 
+const AgentTypeBadge = styled.span<{ $type: string }>`
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background-color: ${({ $type, theme }) =>
+    $type === 'action' ? theme.colors.primary + '22' :
+    $type === 'conditional' ? '#f59e0b22' :
+    theme.colors.border};
+  color: ${({ $type, theme }) =>
+    $type === 'action' ? theme.colors.primary :
+    $type === 'conditional' ? '#f59e0b' :
+    theme.colors.textSecondary};
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+`;
+
 const EmptyState = styled.div`
   text-align: center;
   padding: 40px 20px;
@@ -264,6 +281,71 @@ const LogError = styled.span`
   white-space: nowrap;
 `;
 
+const InboxSection = styled.div`
+  margin-bottom: ${(props) => props.theme.spacing.lg};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: ${(props) => props.theme.borderRadius.md};
+  overflow: hidden;
+`;
+
+const InboxHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background-color: ${(props) => props.theme.colors.surface};
+  cursor: pointer;
+  user-select: none;
+`;
+
+const InboxTitle = styled.div`
+  font-size: 14px;
+  font-weight: 600;
+  color: ${(props) => props.theme.colors.text};
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const UnreadBadge = styled.span`
+  background-color: ${(props) => props.theme.colors.primary};
+  color: white;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+`;
+
+const InboxBody = styled.div`
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+`;
+
+const InboxMessage = styled.div`
+  font-size: 12px;
+  color: ${(props) => props.theme.colors.text};
+  background-color: ${(props) => props.theme.colors.background};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+`;
+
+const MarkReadBtn = styled.button`
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: ${(props) => props.theme.colors.primary};
+  cursor: pointer;
+  padding: 0;
+  &:hover { text-decoration: underline; }
+`;
+
 const RobotIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="11" width="18" height="10" rx="2" />
@@ -288,14 +370,22 @@ export const AgentsView = ({ isOpen, onClose }: AgentsViewProps) => {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [agentRuns, setAgentRuns] = useState<AgentRunLog[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
+  const [observerMessages, setObserverMessages] = useState<Array<{ id: string; content: string; created_at: string }>>([]);
+  const [showObserverInbox, setShowObserverInbox] = useState(false);
 
   const fetchAgents = async () => {
     try {
       setLoading(true);
-      const res = await apiClient.getAllAgents();
-      if (res.success) {
-        setAgents(res.agents);
-        setIsMasterActive(!res.master_paused);
+      const [agentsRes, msgsRes] = await Promise.all([
+        apiClient.getAllAgents(),
+        apiClient.getAgentMessages(),
+      ]);
+      if (agentsRes.success) {
+        setAgents(agentsRes.agents);
+        setIsMasterActive(!agentsRes.master_paused);
+      }
+      if (msgsRes.success) {
+        setObserverMessages(msgsRes.messages || []);
       }
     } catch (err) {
       console.error("Failed to load agents", err);
@@ -303,6 +393,13 @@ export const AgentsView = ({ isOpen, onClose }: AgentsViewProps) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleMarkAllRead = async () => {
+    const ids = observerMessages.map(m => m.id);
+    if (!ids.length) return;
+    await apiClient.markAgentMessagesRead(ids);
+    setObserverMessages([]);
   };
 
   useEffect(() => {
@@ -401,6 +498,27 @@ export const AgentsView = ({ isOpen, onClose }: AgentsViewProps) => {
           />
         </MasterToggleContainer>
 
+        {observerMessages.length > 0 && (
+          <InboxSection>
+            <InboxHeader onClick={() => setShowObserverInbox(v => !v)}>
+              <InboxTitle>
+                Observer Inbox
+                <UnreadBadge>{observerMessages.length}</UnreadBadge>
+              </InboxTitle>
+              <MarkReadBtn onClick={(e) => { e.stopPropagation(); handleMarkAllRead(); }}>
+                Mark all read
+              </MarkReadBtn>
+            </InboxHeader>
+            {showObserverInbox && (
+              <InboxBody>
+                {observerMessages.map(msg => (
+                  <InboxMessage key={msg.id}>{msg.content}</InboxMessage>
+                ))}
+              </InboxBody>
+            )}
+          </InboxSection>
+        )}
+
         <AgentsList>
           {loading ? (
             <EmptyState>Loading agents...</EmptyState>
@@ -414,7 +532,12 @@ export const AgentsView = ({ isOpen, onClose }: AgentsViewProps) => {
             agents.map(agent => (
               <AgentCard key={agent.id} $active={agent.is_active}>
                 <AgentHeader>
-                  <AgentName>{agent.name}</AgentName>
+                  <AgentName>
+                    {agent.name}
+                    <AgentTypeBadge $type={agent.agent_type || 'monitor'}>
+                      {agent.agent_type || 'monitor'}
+                    </AgentTypeBadge>
+                  </AgentName>
                   <AgentControls>
                     <ToggleSwitch 
                       $active={agent.is_active} 

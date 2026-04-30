@@ -1,8 +1,8 @@
 import styled from 'styled-components';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAPIKeyStore } from '../stores/apiKeyStore';
 import { useSettingsStore } from '../stores/settingsStore';
-
+import { apiClient } from '../utils/api';
 import { showToast } from '../stores/toastStore';
 import { ACCESS_TOKEN_PROVIDERS, type AuthMode } from '../types/aiProvider';
 
@@ -156,17 +156,45 @@ const CloseButton = styled.button`
   }
 `;
 
-const TabsContainer = styled.div`
+const TabsWrapper = styled.div`
+  position: relative;
   display: flex;
-  padding: 0 24px;
-  gap: 4px;
+  align-items: stretch;
   background: ${(props) => props.theme.colors.background};
   border-bottom: 1px solid ${(props) => props.theme.colors.border};
 `;
 
-const Tab = styled.button<{ $active: boolean; $provider: string }>`
+const TabScrollArrow = styled.button<{ $visible: boolean }>`
+  flex-shrink: 0;
+  width: 24px;
+  border: none;
+  background: ${(p) => p.theme.colors.background};
+  color: ${(p) => p.theme.colors.textSecondary};
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: ${(p) => p.$visible ? 1 : 0};
+  pointer-events: ${(p) => p.$visible ? 'auto' : 'none'};
+  transition: opacity 0.15s;
+  &:hover { color: ${(p) => p.theme.colors.text}; }
+`;
+
+const TabsContainer = styled.div`
+  display: flex;
+  padding: 0 4px;
+  gap: 4px;
   flex: 1;
-  padding: 14px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+`;
+
+const Tab = styled.button<{ $active: boolean; $provider: string }>`
+  flex: 0 0 auto;
+  padding: 14px 10px;
   background: none;
   border: none;
   border-bottom: 2px solid ${(props) => props.$active ?
@@ -412,17 +440,32 @@ const providerConfig = {
     modelDocsUrl: 'https://docs.aws.amazon.com/bedrock/',
     logo: BedrockLogo,
   },
+  openrouter: {
+    name: 'OpenRouter',
+    company: 'OpenRouter',
+    placeholder: 'sk-or-v1-...',
+    tokenPlaceholder: '',
+    docsUrl: 'https://openrouter.ai/keys',
+    tokenDocsUrl: '',
+    tokenHint: '',
+    modelDocsUrl: 'https://openrouter.ai/models',
+    logo: () => (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#6D28D9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
 };
 
-type Provider = 'claude' | 'openai' | 'gemini' | 'bedrock';
+type Provider = 'claude' | 'openai' | 'gemini' | 'bedrock' | 'openrouter';
 
 export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   const {
-    claudeKey, openaiKey, geminiKey,
-    claudeModel, openaiModel, geminiModel, bedrockModel,
+    claudeKey, openaiKey, geminiKey, openrouterKey,
+    claudeModel, openaiModel, geminiModel, bedrockModel, openrouterModel,
     claudeAuthMode, openaiAuthMode,
-    setClaudeKey, setOpenaiKey, setGeminiKey,
-    setClaudeModel, setOpenaiModel, setGeminiModel, setBedrockModel,
+    setClaudeKey, setOpenaiKey, setGeminiKey, setOpenrouterKey,
+    setClaudeModel, setOpenaiModel, setGeminiModel, setBedrockModel, setOpenrouterModel,
     setClaudeAuthMode, setOpenaiAuthMode
   } = useAPIKeyStore();
 
@@ -434,12 +477,33 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   } = useSettingsStore();
 
   const [activeTab, setActiveTab] = useState<Provider>('openai');
+  const [tabCanScrollLeft, setTabCanScrollLeft] = useState(false);
+  const [tabCanScrollRight, setTabCanScrollRight] = useState(false);
+  const tabScrollRef = useRef<HTMLDivElement>(null);
+
+  const updateTabArrows = () => {
+    const el = tabScrollRef.current;
+    if (!el) return;
+    setTabCanScrollLeft(el.scrollLeft > 0);
+    setTabCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  };
+
+  useEffect(() => {
+    const el = tabScrollRef.current;
+    if (!el) return;
+    updateTabArrows();
+    el.addEventListener('scroll', updateTabArrows);
+    const ro = new ResizeObserver(updateTabArrows);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', updateTabArrows); ro.disconnect(); };
+  }, []);
 
   const [localKeys, setLocalKeys] = useState({
     claude: claudeKey,
     openai: openaiKey,
     gemini: geminiKey,
     bedrock: bedrockAccessKey,
+    openrouter: openrouterKey,
   });
 
   const [localBedrockSecretKey, setLocalBedrockSecretKey] = useState(bedrockSecretKey);
@@ -455,6 +519,7 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
     openai: openaiModel,
     gemini: geminiModel,
     bedrock: bedrockModel,
+    openrouter: openrouterModel,
   });
 
   const validateApiKey = (provider: string, key: string): boolean => {
@@ -512,13 +577,19 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
         break;
 
       case 'bedrock':
-        // AWS Access Keys start with 'AKIA'
         if (!key.startsWith('AKIA')) {
           showToast.error('Invalid AWS Access Key format. Should start with "AKIA"');
           return false;
         }
         if (key.length !== 20) {
           showToast.error('AWS Access Key should be exactly 20 characters');
+          return false;
+        }
+        break;
+
+      case 'openrouter':
+        if (!key.startsWith('sk-or-')) {
+          showToast.error('Invalid OpenRouter API key. Should start with "sk-or-"');
           return false;
         }
         break;
@@ -533,15 +604,18 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
     if (!validateApiKey('openai', localKeys.openai)) return;
     if (!validateApiKey('gemini', localKeys.gemini)) return;
     if (!validateApiKey('bedrock', localKeys.bedrock)) return;
+    if (!validateApiKey('openrouter', localKeys.openrouter)) return;
 
     // Save the keys
     setClaudeKey(localKeys.claude);
     setOpenaiKey(localKeys.openai);
     setGeminiKey(localKeys.gemini);
+    setOpenrouterKey(localKeys.openrouter);
     setClaudeModel(localModels.claude);
     setOpenaiModel(localModels.openai);
     setGeminiModel(localModels.gemini);
     setBedrockModel(localModels.bedrock);
+    setOpenrouterModel(localModels.openrouter);
 
     // Save auth modes
     setClaudeAuthMode(localAuthModes.claude);
@@ -549,6 +623,12 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
 
     // Save Bedrock credentials (Access Key, Secret Key, Region)
     setBedrockCredentials(localKeys.bedrock, localBedrockSecretKey, localBedrockRegion);
+
+    // Sync keys to backend so the background observer can use them
+    apiClient.saveObserverConfig(
+      { claude: localKeys.claude, openai: localKeys.openai, gemini: localKeys.gemini },
+      { claude: localModels.claude, openai: localModels.openai, gemini: localModels.gemini }
+    ).catch(() => {}); // fire-and-forget, non-critical
 
     showToast.success('Settings saved successfully');
     onClose();
@@ -581,23 +661,27 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
           </CloseButton>
         </Header>
 
-        <TabsContainer>
-          {(Object.keys(providerConfig) as Provider[]).map((provider) => {
-            const ProviderLogo = providerConfig[provider].logo;
-            return (
-              <Tab
-                key={provider}
-                $active={activeTab === provider}
-                $provider={provider}
-                onClick={() => setActiveTab(provider)}
-              >
-                <ProviderLogo />
-                {providerConfig[provider].name}
-                <StatusDot $hasKey={!!localKeys[provider]} />
-              </Tab>
-            );
-          })}
-        </TabsContainer>
+        <TabsWrapper>
+          <TabScrollArrow $visible={tabCanScrollLeft} onClick={() => tabScrollRef.current?.scrollBy({ left: -120, behavior: 'smooth' })}>‹</TabScrollArrow>
+          <TabsContainer ref={tabScrollRef}>
+            {(Object.keys(providerConfig) as Provider[]).map((provider) => {
+              const ProviderLogo = providerConfig[provider].logo;
+              return (
+                <Tab
+                  key={provider}
+                  $active={activeTab === provider}
+                  $provider={provider}
+                  onClick={() => setActiveTab(provider)}
+                >
+                  <ProviderLogo />
+                  {providerConfig[provider].name}
+                  <StatusDot $hasKey={!!localKeys[provider]} />
+                </Tab>
+              );
+            })}
+          </TabsContainer>
+          <TabScrollArrow $visible={tabCanScrollRight} onClick={() => tabScrollRef.current?.scrollBy({ left: 120, behavior: 'smooth' })}>›</TabScrollArrow>
+        </TabsWrapper>
 
         <Content>
           {supportsAccessToken && (

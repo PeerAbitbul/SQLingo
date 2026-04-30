@@ -10,6 +10,7 @@ from ai.claude_provider import ClaudeProvider
 from ai.gemini_provider import GeminiProvider
 from ai.bedrock_provider import BedrockProvider
 from ai.ollama_provider import OllamaProvider
+from ai.openrouter_provider import OpenRouterProvider
 
 class AIClient:
     """Unified AI client for SQL generation"""
@@ -42,9 +43,9 @@ class AIClient:
                 # Use default AWS credentials (env vars, IAM role, etc.)
                 self.client = BedrockProvider()
         elif provider == AIProvider.OLLAMA:
-            # Local Ollama server - no API key needed
             self.client = OllamaProvider(base_url=ollama_base_url)
-
+        elif provider == AIProvider.OPENROUTER:
+            self.client = OpenRouterProvider(api_key=api_key)
         else:
             raise ValueError(f"Unsupported AI provider: {provider}")
     
@@ -145,34 +146,71 @@ class AIClient:
         
         return "\n".join(lines)
     
+    def _extract_first_table(self, schema: str) -> str:
+        """Extract the first table name from schema text for use in examples"""
+        import re
+        # Schema lines look like "Table: tablename" or "tablename (table)"
+        match = re.search(r'(?:^|\n)\s*(?:Table:\s*|•\s*)([A-Za-z_][A-Za-z0-9_]*)', schema)
+        if match:
+            return match.group(1)
+        # Fallback: grab any identifier-looking word that isn't a column type
+        words = re.findall(r'\b([A-Za-z_][A-Za-z0-9_]{2,})\b', schema)
+        for w in words:
+            if w.lower() not in ('null', 'not', 'int', 'text', 'varchar', 'char', 'date', 'bool', 'float', 'double', 'bigint', 'columns', 'column', 'table', 'view', 'index', 'primary', 'foreign', 'key'):
+                return w
+        return 'your_table'
+
     def _create_prompt(self, question: str, schema: str, database_type: str, conversation_history: List[Dict[str, str]] = None) -> str:
         """Create prompt for AI with conversation history"""
-        # Determine LIMIT syntax based on database type
-        limit_syntax = {
-            'sqlserver': 'TOP 100',
-            'postgresql': 'LIMIT 100',
-            'mysql': 'LIMIT 100'
-        }.get(database_type.lower(), 'LIMIT 100')
-
         # Build conversation context if history exists
+        # Trim long assistant messages (analysis walls of text confuse small models)
         context = ""
         if conversation_history and len(conversation_history) > 0:
             context = "\n\nPrevious conversation:\n"
-            for msg in conversation_history:
+            for msg in conversation_history[-6:]:  # last 3 pairs max
                 role = "User" if msg['role'] == 'user' else "Assistant"
-                context += f"{role}: {msg['content']}\n"
+                content = msg['content']
+                if role == "Assistant" and len(content) > 300:
+                    content = content[:300] + "... [truncated]"
+                context += f"{role}: {content}\n"
             context += "\n"
 
         from datetime import datetime
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        return f"""You are a helpful database assistant. Answer questions about databases and SQL.
+        # Use real table name from schema in examples so the AI can't hallucinate a fake table
+        example_table = self._extract_first_table(schema)
+        schema_is_empty = (
+            not schema or
+            schema.strip() in ('', 'Schema unavailable', 'No schema found') or
+            'Table:' not in schema
+        )
+
+        return f"""You are a SQL query generator for a {database_type} database.
+
+##### TOP PRIORITY RULE — READ FIRST #####
+If the user asks for data, rows, records, or results — respond with SQL immediately.
+If the user asks to CREATE / ALTER / DROP / INSERT / UPDATE / DELETE — respond with SQL immediately.
+NEVER respond with a procedure-request or agent-request for DDL/DML operations. Just write the SQL.
+Examples:
+  "give me all {example_table}"        → SELECT * FROM {example_table} LIMIT 100;
+  "create a table called orders"       → CREATE TABLE orders (...);
+  "add a column to {example_table}"    → ALTER TABLE {example_table} ADD COLUMN ...;
+  "delete old rows"                    → DELETE FROM ... WHERE ...;
+This rule overrides everything else. When in doubt — write SQL, not JSON.
+##########################################
 
 Current Server Date and Time: {current_time}
 Current database: {database_type}
 
-Database Schema:
-{schema}{context}
+=== CURRENT DATABASE SCHEMA (AUTHORITATIVE — use ONLY these tables and columns) ===
+{schema}
+=== END OF SCHEMA ===
+{"⚠️ WARNING: The schema above contains NO tables. Do NOT invent or guess any table names. If the user asks for data, explain that the database appears to be empty or the schema could not be loaded, and suggest running SHOW TABLES (MySQL) or SELECT table_name FROM information_schema.tables." if schema_is_empty else ""}
+{context}
+CRITICAL RULE: You MUST answer based ONLY on the tables and columns listed in the CURRENT DATABASE SCHEMA above.
+If previous messages in the conversation mention different tables, ignore them — the schema above is the only truth.
+Do NOT invent, assume, or reuse table names from conversation history that are not in the schema.
 
 NOTE: The schema above includes tables, columns, views, and enums.
 Stored procedures are NOT included to save tokens.
@@ -210,58 +248,37 @@ SELECT * FROM table_name;
 }}
 ```
 
-5. When the user asks for DATABASE INSIGHTS or ANALYSIS:
-   - This includes questions like:
-     * "Give me insights about this database"
-     * "Analyze this database"
-     * "Database health check"
-     * "Show me performance metrics"
-     * "What are the issues with this database?"
+5. CRITICAL RULE — DATA REQUESTS vs. ANALYSIS REQUESTS:
 
-   IMPORTANT: Follow this TWO-STEP process:
+   If the user asks for DATA (rows, records, results) — even in casual language — ALWAYS generate SQL immediately. Do NOT ask questions.
+   Examples that must generate SQL right away (use actual table names from the schema above):
+     * "give me all {example_table}" → SELECT * FROM {example_table} LIMIT 100
+     * "show me {example_table}" → SELECT * FROM {example_table} LIMIT 100
+     * "list all {example_table}" → SELECT * FROM {example_table} LIMIT 100
+     * "get the last 10 from {example_table}" → SELECT * FROM {example_table} LIMIT 10
+     * "how many rows in X" → SELECT COUNT(*) FROM X
+   These are DATA requests. Always respond with a SQL query. Never ask for confirmation.
+
+   The TWO-STEP analysis flow is ONLY for explicit meta-level requests about the DATABASE ITSELF:
+     * "give me insights about this database"
+     * "analyze this database"
+     * "database health check"
+     * "show me performance metrics"
+     * "what are the issues with this database"
+     * "what do you see in this database"
+
+   For those ONLY, follow this TWO-STEP process:
 
    STEP 1 - FIRST RESPONSE (Analysis Only - NO CODE):
    - Analyze the schema and provide your OBSERVATIONS in plain text
-   - List what you found: number of tables, views, key tables, potential issues
-   - Explain your findings in a conversational way
-   - At the END, ask: "Would you like me to generate a diagnostic SQL script to check these items?"
+   - List: number of tables, views, key tables, potential issues
+   - At the END, ask: "Would you like me to generate a diagnostic SQL script?"
    - DO NOT include any SQL code in this first response
 
-   STEP 2 - ONLY AFTER USER CONFIRMS (says "yes", "sure", "ok", "generate", "create script", etc.):
-   - THEN generate the comprehensive SQL diagnostic script
-   - CRITICAL: Wrap ALL SQL code in EXACTLY ONE ```sql``` code block like this:
+   STEP 2 - ONLY AFTER USER CONFIRMS ("yes", "sure", "ok", "generate", etc.):
+   - Generate the diagnostic SQL script in ONE ```sql``` block
 
-```sql
--- Your SQL script here
-SELECT * FROM table;
-```
-
-   - Include all diagnostic queries with comments INSIDE the code block
-   - Add NEED HELP section at the end INSIDE the code block
-   - The code block format is REQUIRED for the UI to display it correctly
-
-   Example FIRST response (no code):
-   "Based on your database schema, here's what I found:
-
-   **Schema Overview:**
-   - Found 10 tables and 1 view
-   - Key transactional tables: CommunicationSystems, Users, AuditLogs
-
-   **Observations:**
-   - The CommunicationSystems table is central, linking divisions, users, and communication types
-   - The Users table has comprehensive user management with AD integration
-   - The AuditLogs table captures detailed user actions
-
-   **Potential Concerns:**
-   - Some columns use nvarchar(-1) which can store large text but may impact performance
-   - Consider reviewing index strategy for frequently queried tables
-
-   Would you like me to generate a diagnostic SQL script to analyze performance, indexes, and table statistics?"
-
-   REMEMBER:
-   - NO emojis in the output
-   - First response = analysis + question (NO SQL)
-   - Second response = SQL script (only after user confirms)
+   REMEMBER: When in doubt — generate SQL. The user came here for data, not conversation.
 
 6. When the user asks about DATABASE PROPERTIES or DATABASE INFO:
    - This includes questions like:
@@ -294,28 +311,46 @@ WHERE name = DB_NAME();
 ```
 
 7. **CRITICAL SYSTEM DIRECTIVE: AGENT BUILDER**
-   - WHEN THE USER ASKS TO SCHEDULE A JOB, SET AN ALERT, OR CREATE A BACKGROUND AGENT (e.g., "send me a report every 30 seconds", "create an agent for 5 minutes from now"), YOU ARE FORBIDDEN FROM ENGAGING IN CONVERSATION.
-   - YOU MUST OUTPUT **ONLY** A SINGLE MARKDOWN JSON BLOCK, EXACTLY AS SHOWN BELOW, AND ABSOLUTELY **NOTHING ELSE** (NO greetings, NO text above, NO text below, NO SQL blocks).
+   - WHEN THE USER ASKS TO SCHEDULE A JOB, SET AN ALERT, AUTOMATE AN ACTION, OR CREATE A BACKGROUND AGENT, YOU ARE FORBIDDEN FROM ENGAGING IN CONVERSATION.
+   - YOU MUST OUTPUT **ONLY** A SINGLE MARKDOWN JSON BLOCK AS SHOWN BELOW, AND ABSOLUTELY **NOTHING ELSE**.
    - If you output anything other than this exact block, the system will crash.
 
 ```agent-request
 {{
   "action": "create_agent",
   "name": "Meaningful name for the job",
-  "schedule_type": "date", 
-  "schedule": "YYYY-MM-DD HH:MM:SS", 
-  "query_logic": "SELECT count(*) FROM errors WHERE date > CAST(GETDATE()-1 AS DATE)", 
+  "agent_type": "monitor",
+  "schedule_type": "cron",
+  "schedule": "0 8 * * *",
+  "query_logic": "SELECT ...",
   "destination": "local"
 }}
 ```
-   - "schedule_type": Must be "cron" for repeating/interval jobs, or "date" for one-time executions in the future.
-   - "schedule": A 5-part or 6-part cron string if "cron" (e.g. `*/30 * * * * *` for every 30 secs), OR absolute future timestamp (YYYY-MM-DD HH:MM:SS) if "date". Calculate based on "Current Server Date and Time".
-   - "query_logic": The raw SELECT query.
 
-**EXAMPLES OF SCHEDULE TYPES:**
-To run EVERY 30 seconds (repeating): `"schedule_type": "cron", "schedule": "*/30 * * * * *"`
-To run EVERY day at 8 AM (repeating): `"schedule_type": "cron", "schedule": "0 8 * * *"`
-To run exactly ONCE in 5 minutes: Calculate current time + 5 mins, `"schedule_type": "date", "schedule": "2026-04-06 06:45:00"`
+**FIELD: agent_type** — choose the right type based on what the user asked:
+
+- `"monitor"` — Read-only. Runs a SELECT and reports results to the inbox. Use for: alerts, reports, scheduled checks.
+  - `"query_logic"`: a single SELECT query.
+  - Example: *"Notify me every morning if there are new errors"*
+
+- `"action"` — Runs a write query (INSERT, UPDATE, DELETE, EXEC, CALL). Use for: scheduled cleanup, archiving, maintenance tasks.
+  - `"query_logic"`: a single INSERT/UPDATE/DELETE/EXEC statement.
+  - Example: *"Every Sunday, delete orders older than 2 years"*
+
+- `"conditional"` — Checks a condition first, then runs an action only if triggered. Use for: "if X then do Y" automations.
+  - `"query_logic"`: a JSON array with exactly 2 elements: `["<condition SELECT>", "<action SQL>"]`
+  - The condition query is run first. If it returns ANY rows, the action SQL is executed.
+  - Example: *"If there are unpaid invoices older than 30 days, mark them as overdue"*
+  - conditional query_logic example: `"[\\"SELECT id FROM invoices WHERE due_date < GETDATE()-30 AND status = 'pending'\\", \\"UPDATE invoices SET status = 'overdue' WHERE due_date < GETDATE()-30 AND status = 'pending'\\"]"`
+
+**FIELD: schedule_type / schedule:**
+   - "cron" for repeating jobs. 5-part cron: `"0 8 * * *"` = every day 8am. 6-part with seconds: `"*/30 * * * * *"` = every 30 sec.
+   - "date" for one-time: absolute timestamp `"YYYY-MM-DD HH:MM:SS"` calculated from current server time.
+
+**EXAMPLES:**
+- Every day at 8am, report errors: `monitor`, `"0 8 * * *"`, SELECT query
+- Every Sunday midnight, archive logs: `action`, `"0 0 * * 0"`, DELETE/INSERT query
+- Every hour, escalate stale tickets if any: `conditional`, `"0 * * * *"`, JSON array of [check SELECT, update action]
 
 8. **CRITICAL SYSTEM DIRECTIVE: IMMEDIATE ANALYSIS LOOP**
    - WHEN THE USER EXPLICITLY ASKS YOU TO *ANALYZE*, *EVALUATE*, or *CHECK* SOMETHING **RIGHT NOW** and give them your conclusions directly (e.g. "Check fragmentation right now and tell me what you think", "Can you scan the system for performance issues?").
@@ -329,26 +364,23 @@ To run exactly ONCE in 5 minutes: Calculate current time + 5 mins, `"schedule_ty
 }}
 ```
 
-9. When generating SELECT queries (NOT AGENTS AND NOT ANALYSIS):
-   - ALWAYS limit results to 100 rows for performance
-   - For SQL Server: Use "SELECT TOP 100"
-   - For PostgreSQL/MySQL: Use "LIMIT 100" at the end
+9. SYNTAX RULES FOR {database_type.upper()} (CURRENT DATABASE — MANDATORY):
+   - NEVER use TOP syntax. NEVER write "SELECT TOP N".
+   - ALWAYS use: SELECT * FROM table LIMIT 100
    - Put ONLY the SQL query inside the ```sql``` code block
    - Put your explanation OUTSIDE the code block
    - Make the SQL clean and properly formatted
    - DO NOT add comments inside the SQL code block (we'll add them automatically)
    - EXCEPTION: Database insights scripts SHOULD include comments for interpretation guidance
 
-10. Current database uses: {limit_syntax}
-
-Example response format for {database_type}:
-Here's a query to get users:
+Example response format for {database_type} (follow this exact syntax):
+Here's a query to get {example_table}:
 
 ```sql
-SELECT TOP 100 * FROM users;
+SELECT * FROM {example_table} LIMIT 100;
 ```
 
-This will retrieve up to 100 user records from the database.
+This will retrieve up to 100 records from the {example_table} table.
 
 User: {question}
 """
@@ -403,9 +435,17 @@ User: {question}
                 'agent_request': agent_request
             }
 
-        # Check for procedure request
+        # Check for procedure request (also catch plain ``` blocks with action JSON from small models)
         procedure_pattern = r'```procedure-request\s*(.*?)\s*```'
         procedure_matches = re.findall(procedure_pattern, response, re.DOTALL | re.IGNORECASE)
+
+        # Fallback: detect plain JSON code blocks that contain a procedure action
+        if not procedure_matches:
+            import json as _json
+            plain_block_pattern = r'```(?:json)?\s*(\{[^`]*?"action"\s*:\s*"fetch_procedure[^`]*?\})\s*```'
+            plain_matches = re.findall(plain_block_pattern, response, re.DOTALL | re.IGNORECASE)
+            if plain_matches:
+                procedure_matches = plain_matches
 
         if procedure_matches:
             # Found procedure request - extract it

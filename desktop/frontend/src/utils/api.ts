@@ -44,7 +44,7 @@ export interface ChatRequest {
   question: string;
   connection_string: string;
   database_type: 'sqlserver' | 'postgresql' | 'mysql';
-  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama';
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
   ai_model?: string;  // Optional: specific model to use
   api_key?: string;  // For BYOK mode (not used for bedrock/ollama)
   auth_mode?: 'api_key' | 'access_token';  // Authentication mode
@@ -76,9 +76,23 @@ export interface QueryExecuteResponse {
   error?: string;
 }
 
+export interface QueryActionRequest {
+  connection_string: string;
+  database_type: 'sqlserver' | 'postgresql' | 'mysql';
+  sql_query: string;
+  connection_name?: string;
+}
+
+export interface QueryActionResponse {
+  success: boolean;
+  affected_rows: number;
+  log_id?: string;
+  error?: string;
+}
+
 export interface GenerateTitleRequest {
   question: string;
-  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama';
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
   ai_model?: string;  // Optional: specific model to use
   api_key?: string;  // For BYOK mode (not used for bedrock/ollama)
   auth_mode?: 'api_key' | 'access_token';  // Authentication mode
@@ -104,6 +118,7 @@ export interface AgentData {
   created_at: string;
   last_run_at: string | null;
   last_status: string | null;
+  agent_type: 'monitor' | 'action' | 'conditional';
 }
 
 export interface AgentRunLog {
@@ -200,6 +215,17 @@ class APIClient {
     });
   }
 
+  async executeActionQuery(data: QueryActionRequest): Promise<QueryActionResponse> {
+    return this.request<QueryActionResponse>('/query/execute-action', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getActionLogs(limit = 50): Promise<{ success: boolean; logs: any[] }> {
+    return this.request<{ success: boolean; logs: any[] }>(`/query/action-logs?limit=${limit}`);
+  }
+
   async generateChatTitle(data: GenerateTitleRequest): Promise<GenerateTitleResponse> {
     return this.request<GenerateTitleResponse>('/chat/generate-title', {
       method: 'POST',
@@ -251,6 +277,13 @@ class APIClient {
 
   async getAgentRuns(agentId: string, limit: number = 10): Promise<{ success: boolean, runs: AgentRunLog[] }> {
     return this.request<{ success: boolean, runs: AgentRunLog[] }>(`/agents/${agentId}/runs?limit=${limit}`);
+  }
+
+  async saveObserverConfig(keys: Record<string, string>, models: Record<string, string>): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>('/agents/observer-config', {
+      method: 'POST',
+      body: JSON.stringify({ keys, models }),
+    });
   }
 
   async saveFavorite(data: { connection_id: number, title: string, sql_query: string, description?: string, tags?: string }): Promise<{ success: boolean, id: number }> {

@@ -36,10 +36,41 @@ const TopBar = styled.div`
   padding: 0 ${(props) => props.theme.spacing.xs};
 `;
 
+const ProviderSelectorWrapper = styled.div`
+  position: relative;
+  flex-shrink: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+`;
+
 const ProviderSelectorCompact = styled.div`
   display: flex;
   gap: ${(props) => props.theme.spacing.xs};
   align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+`;
+
+const ScrollArrow = styled.button<{ $visible: boolean }>`
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid ${(p) => p.theme.colors.border};
+  background: ${(p) => p.theme.colors.surface};
+  color: ${(p) => p.theme.colors.textSecondary};
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: ${(p) => p.$visible ? 1 : 0};
+  pointer-events: ${(p) => p.$visible ? 'auto' : 'none'};
+  transition: opacity 0.15s, background 0.15s;
+  &:hover { background: ${(p) => p.theme.colors.background}; color: ${(p) => p.theme.colors.text}; }
 `;
 
 const ProviderLabel = styled.span`
@@ -53,6 +84,8 @@ const ProviderLabel = styled.span`
 const ProviderButton = styled.button<{ $active: boolean; $provider: AIProvider }>`
   padding: 4px 10px;
   border-radius: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
   border: 1px solid ${(props) => props.$active ? 'transparent' : props.theme.colors.border};
   background-color: ${(props) => {
     if (!props.$active) return 'transparent';
@@ -238,7 +271,10 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
   const [filteredCommands, setFilteredCommands] = useState(SLASH_COMMANDS);
   
   const [isAnalyzingPlanLocal, setIsAnalyzingPlanLocal] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const providerScrollRef = useRef<HTMLDivElement>(null);
   const { addMessage, chats, updateChat } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
@@ -246,6 +282,23 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
   const { installedModels: ollamaInstalled, selectedModel: ollamaSelectedModel, baseUrl: ollamaBaseUrl } = useOllamaStore();
 
   const generateSQLMutation = useGenerateSQL();
+
+  const updateScrollArrows = () => {
+    const el = providerScrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  };
+
+  useEffect(() => {
+    const el = providerScrollRef.current;
+    if (!el) return;
+    updateScrollArrows();
+    el.addEventListener('scroll', updateScrollArrows);
+    const ro = new ResizeObserver(updateScrollArrows);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', updateScrollArrows); ro.disconnect(); };
+  }, []);
 
   // Auto-resize textarea based on content
   useEffect(() => {
@@ -601,9 +654,14 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
       const aiModel = aiProvider === 'ollama' ? (ollamaSelectedModel || undefined) : getModelForProvider(aiProvider);
 
       // Get conversation history (last 10 messages for context)
-      // Use currentChat from above instead of fetching again
+      // Filter out error/system messages so they don't confuse small AI models
       const conversationHistory = currentChat.messages
-        .slice(-10) // Last 10 messages
+        .filter(msg => !(msg.role === 'assistant' && (
+          msg.content.startsWith('Error:') ||
+          msg.content.startsWith('Analysis failed') ||
+          msg.content === 'Response generated successfully'
+        )))
+        .slice(-10)
         .map(msg => ({
           role: msg.role,
           content: msg.content
@@ -757,7 +815,9 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
       {isAnalyzingPlan && <LoadingIndicator>Analyzing execution plan...</LoadingIndicator>}
 
       <TopBar>
-        <ProviderSelectorCompact>
+        <ProviderSelectorWrapper>
+          <ScrollArrow $visible={canScrollLeft} onClick={() => { providerScrollRef.current?.scrollBy({ left: -120, behavior: 'smooth' }); }}>‹</ScrollArrow>
+          <ProviderSelectorCompact ref={providerScrollRef}>
           <ProviderLabel>AI</ProviderLabel>
           <ProviderButton
             $active={currentProvider === 'claude'}
@@ -791,6 +851,18 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
             <ProviderIconWrapper><BedrockLogo /></ProviderIconWrapper>
             Bedrock
           </ProviderButton>
+          <ProviderButton
+            $active={currentProvider === 'openrouter'}
+            $provider="openrouter"
+            onClick={() => handleProviderChange('openrouter')}
+          >
+            <ProviderIconWrapper>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </ProviderIconWrapper>
+            OpenRouter
+          </ProviderButton>
           {ollamaInstalled.length > 0 && (
             <ProviderButton
               $active={currentProvider === 'ollama'}
@@ -801,7 +873,9 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
               Ollama
             </ProviderButton>
           )}
-        </ProviderSelectorCompact>
+          </ProviderSelectorCompact>
+          <ScrollArrow $visible={canScrollRight} onClick={() => { providerScrollRef.current?.scrollBy({ left: 120, behavior: 'smooth' }); }}>›</ScrollArrow>
+        </ProviderSelectorWrapper>
       </TopBar>
 
       <InputWrapper>

@@ -39,7 +39,8 @@ export async function fetchHardware(): Promise<HardwareInfo> {
 // ── Catalog ─────────────────────────────────────────────────────────────
 
 export interface CatalogResponse {
-  gemma: GemmaModel[];
+  catalog?: GemmaModel[];  // full multi-family catalog
+  gemma: GemmaModel[];     // backward compat
   other_installed: string[];
   hardware: HardwareInfo;
 }

@@ -119,6 +119,17 @@ export const ExecutionPlanViewer = ({ analysis }: Props) => {
                   <ColumnList>{index.included_columns.join(', ')}</ColumnList>
                 </IndexColumns>
               )}
+              {index.create_index_sql && (
+                <IndexSqlBlock>
+                  <IndexSqlHeader>
+                    <span>CREATE INDEX</span>
+                    <CopyBtn onClick={() => navigator.clipboard.writeText(index.create_index_sql!)}>
+                      Copy
+                    </CopyBtn>
+                  </IndexSqlHeader>
+                  <IndexSqlCode>{index.create_index_sql}</IndexSqlCode>
+                </IndexSqlBlock>
+              )}
             </IndexCard>
           ))}
         </Section>
@@ -361,6 +372,45 @@ const ColumnLabel = styled.span`
 const ColumnList = styled.span`
   color: ${(props) => props.theme.colors.text};
   font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+`;
+
+const IndexSqlBlock = styled.div`
+  margin-top: 10px;
+  background-color: ${(props) => props.theme.colors.background};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: 6px;
+  overflow: hidden;
+`;
+
+const IndexSqlHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 10px;
+  background-color: ${(props) => props.theme.colors.surface};
+  border-bottom: 1px solid ${(props) => props.theme.colors.border};
+  font-size: 11px;
+  color: ${(props) => props.theme.colors.textSecondary};
+`;
+
+const CopyBtn = styled.button`
+  background: none;
+  border: none;
+  color: ${(props) => props.theme.colors.primary};
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  &:hover { text-decoration: underline; }
+`;
+
+const IndexSqlCode = styled.pre`
+  margin: 0;
+  padding: 10px;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 12px;
+  color: ${(props) => props.theme.colors.text};
+  white-space: pre-wrap;
+  word-break: break-all;
 `;
 
 const RecommendationsList = styled.div`

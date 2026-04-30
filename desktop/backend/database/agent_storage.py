@@ -1,7 +1,6 @@
 import sqlite3
 import json
 import uuid
-import os
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -35,9 +34,15 @@ class AgentStorage:
                     is_active INTEGER DEFAULT 1,
                     created_at TEXT NOT NULL,
                     last_run_at TEXT,
-                    last_status TEXT
+                    last_status TEXT,
+                    agent_type TEXT DEFAULT 'monitor'
                 )
             ''')
+            # Migration: add agent_type column to existing DBs
+            try:
+                cursor.execute("ALTER TABLE agents ADD COLUMN agent_type TEXT DEFAULT 'monitor'")
+            except Exception:
+                pass  # Column already exists
             
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS agent_messages (
@@ -87,26 +92,27 @@ class AgentStorage:
     def create_agent(self, agent_data: Dict[str, Any]) -> str:
         agent_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO agents 
-                (id, name, connection_id, schedule, query_logic, destination, destination_config, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO agents
+                (id, name, connection_id, schedule, query_logic, destination, destination_config, is_active, created_at, agent_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 agent_id,
                 agent_data.get('name', 'Unnamed Agent'),
                 agent_data.get('connection_id'),
-                agent_data.get('schedule', '0 8 * * *'), # default 8am
+                agent_data.get('schedule', '0 8 * * *'),
                 agent_data.get('query_logic', ''),
-                agent_data.get('destination', 'telegram'),
+                agent_data.get('destination', 'local'),
                 json.dumps(agent_data.get('destination_config', {})),
                 1 if agent_data.get('is_active', True) else 0,
-                now
+                now,
+                agent_data.get('agent_type', 'monitor'),
             ))
             conn.commit()
-            
+
         return agent_id
 
     def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:

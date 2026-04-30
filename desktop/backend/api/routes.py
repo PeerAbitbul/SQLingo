@@ -12,9 +12,12 @@ from pydantic import BaseModel
 from typing import Optional, List
 from database.connection import DatabaseConnection
 from database.schema_extractor import SchemaExtractor
+from database.query_log_storage import QueryLogStorage
 from ai.client import AIClient
 from ai.providers import AIProvider
 from utils.permission_helper import is_permission_error, get_permission_error_response
+
+query_log_storage = QueryLogStorage()
 
 
 router = APIRouter()
@@ -170,10 +173,16 @@ async def generate_sql(request: ChatRequest):
                 }
             )
         elif request.ai_provider == 'ollama':
-            # Ollama runs locally - no API key required
             ai_client = AIClient(
                 provider=AIProvider.OLLAMA,
                 ollama_base_url=request.ollama_base_url
+            )
+        elif request.ai_provider == 'openrouter':
+            if not request.api_key:
+                raise HTTPException(status_code=400, detail="OpenRouter API key required")
+            ai_client = AIClient(
+                provider=AIProvider.OPENROUTER,
+                api_key=request.api_key
             )
         else:
             # Other providers use API key or access token
@@ -345,32 +354,43 @@ async def generate_sql(request: ChatRequest):
                 agent_schedule_type = result['agent_request'].get('schedule_type', 'cron')
                 agent_schedule = result['agent_request'].get('schedule', '0 8 * * *')
                 target_query = result['agent_request'].get('query_logic', '')
-                
-                # Insert to SQLite agents.db 
+                agent_type = result['agent_request'].get('agent_type', 'monitor')
+
+                # Insert to SQLite agents.db
                 try:
                     agent_id = agent_db.create_agent({
                         'name': agent_name,
-                        'connection_id': 'dynamic', # Connection managed by FE currently
+                        'connection_id': 'dynamic',
                         'schedule': f"{agent_schedule_type}:{agent_schedule}",
                         'query_logic': target_query,
                         'destination': 'local',
+                        'agent_type': agent_type,
                         'destination_config': {
                             'connection_string': request.connection_string,
                             'database_type': request.database_type
                         }
                     })
-                    
+
                     # Add to APScheduler
                     agent_scheduler.add_agent_job(agent_id, agent_schedule, schedule_type=agent_schedule_type)
-                    
-                    success_msg = f"**Agent Created Successfully**\n"
-                    success_msg += f"---\n"
+
+                    type_label = {'monitor': 'Monitor', 'action': 'Action', 'conditional': 'Conditional'}.get(agent_type, agent_type.capitalize())
+                    success_msg = f"**{type_label} Agent Created Successfully**\n---\n"
                     if agent_schedule_type == 'date':
-                        success_msg += f"- **Name:** {agent_name}\n- **Runs Once At:** `{agent_schedule}`\n- **Destination:** Local Chat Inbox\n\n"
+                        success_msg += f"- **Name:** {agent_name}\n- **Runs Once At:** `{agent_schedule}`\n"
                     else:
-                        success_msg += f"- **Name:** {agent_name}\n- **Schedule:** `{agent_schedule}` (Cron format)\n- **Destination:** Local Chat Inbox\n\n"
-                    success_msg += f"> Target Query:\n"
-                    success_msg += f"```sql\n{target_query}\n```\n"
+                        success_msg += f"- **Name:** {agent_name}\n- **Schedule:** `{agent_schedule}` (Cron)\n"
+                    success_msg += f"- **Type:** {type_label}\n\n"
+
+                    if agent_type == 'conditional':
+                        import json as _json
+                        try:
+                            steps = _json.loads(target_query)
+                            success_msg += f"> Condition check:\n```sql\n{steps[0]}\n```\n> Action if triggered:\n```sql\n{steps[1]}\n```\n"
+                        except Exception:
+                            success_msg += f"> Logic:\n```\n{target_query}\n```\n"
+                    else:
+                        success_msg += f"> Query:\n```sql\n{target_query}\n```\n"
 
                     return ChatResponse(
                         sql_query='',
@@ -516,6 +536,78 @@ async def execute_query(request: QueryExecuteRequest):
             success=False,
             error=str(e)
         )
+
+class QueryActionRequest(BaseModel):
+    connection_string: str
+    database_type: str
+    sql_query: str
+    connection_name: Optional[str] = None
+
+class QueryActionResponse(BaseModel):
+    success: bool
+    affected_rows: int = 0
+    log_id: Optional[str] = None
+    error: Optional[str] = None
+
+def _clean_db_error(raw: str) -> str:
+    """Strip SQLAlchemy boilerplate, return just the DB error message."""
+    import re
+    # Remove [SQL: ...] block (can be multiline)
+    msg = re.sub(r'\s*\[SQL:.*?\]', '', raw, flags=re.DOTALL)
+    # Remove (Background on this error at: ...)
+    msg = re.sub(r'\s*\(Background on this error at:.*?\)', '', msg, flags=re.DOTALL)
+    # Strip "Action execution failed: " prefix added by execute_action
+    msg = re.sub(r'^Action execution failed:\s*', '', msg)
+    # Extract the human-readable part from "(errcode, "message")" pattern
+    match = re.search(r'\(\d+,\s*["\'](.+?)["\']\)\s*$', msg.strip())
+    if match:
+        return match.group(1)
+    return msg.strip()
+
+@router.post("/query/execute-action", response_model=QueryActionResponse)
+async def execute_action_query(request: QueryActionRequest):
+    """Execute a write query (DDL/DML) with logging"""
+    affected = 0
+    status = "success"
+    error_msg = None
+    try:
+        db = DatabaseConnection(request.connection_string, request.database_type)
+        result = db.execute_action(request.sql_query)
+        affected = result.get('affected_rows', 0)
+    except Exception as e:
+        status = "error"
+        error_msg = _clean_db_error(str(e))
+
+    log_id = query_log_storage.log_query(
+        database_type=request.database_type,
+        sql_query=request.sql_query,
+        affected_rows=affected,
+        status=status,
+        connection_name=request.connection_name,
+        error_message=error_msg,
+    )
+
+    if status == "error":
+        return QueryActionResponse(success=False, affected_rows=0, log_id=log_id, error=error_msg)
+
+    return QueryActionResponse(success=True, affected_rows=affected, log_id=log_id)
+
+class QueryActionLog(BaseModel):
+    id: str
+    connection_name: Optional[str]
+    database_type: str
+    sql_query: str
+    affected_rows: int
+    status: str
+    error_message: Optional[str]
+    executed_at: str
+
+@router.get("/query/action-logs")
+async def get_action_logs(limit: int = 50):
+    """Get write query execution history"""
+    logs = query_log_storage.get_logs(limit=limit)
+    return {"success": True, "logs": logs}
+
 
 @router.post("/chat/generate-title", response_model=GenerateTitleResponse)
 async def generate_chat_title(request: GenerateTitleRequest):
@@ -690,6 +782,31 @@ Return ONLY the title, nothing else."""
             title = ' '.join(words).capitalize() if words else 'New Chat'
             return GenerateTitleResponse(title=title, success=True)
         
+        elif request.ai_provider == 'openrouter':
+            model_name = request.ai_model or 'meta-llama/llama-3.1-8b-instruct:free'
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    headers={
+                        'Authorization': f'Bearer {request.api_key}',
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://sqlingo.app',
+                        'X-Title': 'SQLingo',
+                    },
+                    json={
+                        'model': model_name,
+                        'messages': [{'role': 'user', 'content': prompt}],
+                        'max_tokens': 20,
+                        'temperature': 0.7,
+                    },
+                    timeout=15.0
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    title = result['choices'][0]['message']['content'].strip()
+                    if title:
+                        return GenerateTitleResponse(title=title, success=True)
+
         # Fallback: Extract first few words from question
         words = request.question.split()[:4]
         title = ' '.join(words).capitalize()
@@ -724,6 +841,10 @@ async def analyze_execution_plan(
     Free for all users - no restrictions.
     """
     try:
+        parser = ExecutionPlanParser()
+        parsed_plan = parser.parse(request.xml_content)
+        
+        analyzer = ExecutionPlanAnalyzer()
         analysis = analyzer.analyze(parsed_plan)
 
         # Get AI insights if provider specified

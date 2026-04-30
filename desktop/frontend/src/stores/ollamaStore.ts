@@ -6,6 +6,7 @@ export type ModelFit = 'compatible' | 'recommended' | 'risky' | 'incompatible';
 export interface GemmaModel {
   id: string;
   name: string;
+  family: string;
   params: string;
   active_params: string;
   ram_required_gb: number;

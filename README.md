@@ -1,166 +1,169 @@
-# SQLingo - Free AI-Powered Database Assistant
+# SQLingo — Free AI-Powered Database Assistant
 
-> 🚀 **Free Desktop Application** - Natural language queries for your databases using your own AI API keys.
-
-A completely free desktop application that lets you interact with your databases using natural language. All AI calls are made directly from your machine using your own API keys (BYOK - Bring Your Own Keys). **No subscriptions, no limits, no cloud dependencies.**
+> Talk to your databases in plain English. Runs 100% on your machine, uses your own AI keys.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+![Node](https://img.shields.io/badge/node-18+-green)
 
 ---
 
-## 📋 How It Works
+## What is SQLingo?
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         YOUR MACHINE (100% LOCAL)                        │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │                    DESKTOP APPLICATION (SQLingo)                   │  │
-│  │                                                                    │  │
-│  │   ┌─────────────────────┐      ┌─────────────────────────────┐    │  │
-│  │   │   Electron + React  │      │    Python Backend (Local)   │    │  │
-│  │   │   ----------------  │ IPC  │    -----------------------   │    │  │
-│  │   │   • Chat UI         │◄────►│    • FastAPI Server         │    │  │
-│  │   │   • Settings        │      │    • Database Connectors    │    │  │
-│  │   │   • Connection Mgr  │      │    • Schema Extractor       │    │  │
-│  │   └─────────────────────┘      │    • AI Client (BYOK)       │    │  │
-│  │                                └──────────────┬──────────────┘    │  │
-│  └───────────────────────────────────────────────│───────────────────┘  │
-│                                                  │                       │
-│                                      Direct AI API Calls                 │
-│                                      (Your Own API Keys)                 │
-│                                                  │                       │
-│                                                  ▼                       │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                      AI PROVIDERS (EXTERNAL)                       │  │
-│  │   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────────┐  │  │
-│  │   │ OpenAI  │  │ Claude  │  │ Gemini  │  │ AWS Bedrock         │  │  │
-│  │   │ GPT-4o  │  │ Sonnet  │  │ Flash   │  │ (Direct Access)     │  │  │
-│  │   └─────────┘  └─────────┘  └─────────┘  └─────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                  │                       │
-│                                                  ▼                       │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                      YOUR DATABASES                                │  │
-│  │   ┌──────────────┐  ┌───────────┐  ┌────────────────────────┐    │  │
-│  │   │ PostgreSQL   │  │ MySQL     │  │ SQL Server             │    │  │
-│  │   └──────────────┘  └───────────┘  └────────────────────────┘    │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+SQLingo is a free desktop application that lets you write natural language questions and get back working SQL — instantly. No cloud subscription, no usage limits, no data leaving your machine unless you choose it.
 
-### Key Architecture Points:
-- **🔐 100% Local** - Everything runs on your machine.
-- **🆓 Completely Free** - No subscriptions, no usage limits, no trials.
-- **🔑 BYOK (Bring Your Own Keys)** - Use your own AI provider keys.
-- **🛡️ Privacy First** - Your database data and AI queries never pass through "our" servers.
-- **💾 Local Persistence** - History and settings are stored in local SQLite files.
+**BYOK (Bring Your Own Keys)** — connect your own OpenAI, Claude, Gemini, Bedrock, or OpenRouter API key. Or run fully offline with Ollama.
 
 ---
 
-## ✨ Features
+## Features
 
-### 🤖 AI Providers (BYOK)
-- **OpenAI**: GPT-4o, GPT-4o-mini
-- **Anthropic**: Claude 3.5 Sonnet
-- **Google**: Gemini 2.0 Flash
-- **AWS Bedrock**: Claude models via direct AWS integration
+### AI Providers
+| Provider | Models |
+|----------|--------|
+| **OpenAI** | GPT-4o, GPT-4o-mini, and more |
+| **Anthropic** | Claude 3.5 Sonnet, Claude 3 Haiku |
+| **Google** | Gemini 2.0 Flash, Gemini 1.5 Pro |
+| **AWS Bedrock** | Claude via direct AWS integration |
+| **OpenRouter** | 100+ models via a single API key |
+| **Ollama** | Llama 3, Mistral, Gemma, Qwen, Phi-4 — fully offline |
 
-### 🗄️ Database Support
-- **PostgreSQL**, **MySQL**, **SQL Server**
-- Schema awareness (Tables, Views, PKs, FKs, Indexes, Enums)
+### Database Support
+- **PostgreSQL**, **MySQL / MariaDB**, **SQL Server**
+- Full schema awareness: tables, views, primary keys, foreign keys, indexes, enums
 
-### 🎨 Desktop Experience
-- **Natural Language to SQL**: Talk to your data.
-- **Floating Window**: Always-on-top mode for quick access.
-- **Execution Plan Analysis**: Analyze query performance visually.
-- **Modern UI**: Dark/Light mode support.
+### Query Features
+- Natural language → SQL generation with conversation history
+- **Run SELECT queries** directly — results shown in-app
+- **Run write queries** (INSERT / UPDATE / DELETE / CREATE / DROP) with confirmation dialog and execution log
+- **Query Favorites** — save and reuse queries across sessions
+- **Execution Plan Analyzer** — paste a SQL Server `.sqlplan` or XML and get AI-powered bottleneck analysis
 
----
+### Autonomous Agents
+- Schedule SQL monitors that run on a cron schedule
+- Agents can send results to Telegram or store locally
+- Full run history and log viewer
 
-## 📁 Project Structure
-
-```
-sqlingo/
-├── desktop/                      # 🖥️ DESKTOP APPLICATION
-│   ├── frontend/                 # Electron + React
-│   │   ├── electron/             # Main process & preload
-│   │   ├── src/                  # UI (Chat, Settings, Connections)
-│   │   └── package.json
-│   │
-│   └── backend/                  # Python FastAPI (LOCAL)
-│       ├── ai/                   # AI provider integrations
-│       ├── database/             # Connectors & Schema extraction
-│       ├── api/                  # Local endpoints
-│       └── main.py               # Local server entry
-│
-├── docs/                         # Documentation
-└── scripts/                      # Build & utility scripts
-```
+### Desktop Experience
+- Chat interface with persistent conversation history per connection
+- Slash commands: `/permission mssql`, `/permission postgres`, `/telegram`
+- Dark / Light mode
+- Floating always-on-top window mode
 
 ---
 
-## 🚀 Quick Start
+## How It Works
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    YOUR MACHINE (100% LOCAL)                  │
+│                                                              │
+│   Electron + React  ◄──IPC──►  Python FastAPI (local)        │
+│   (Chat UI, Settings)          (AI client, DB connectors)    │
+│                                        │                     │
+└────────────────────────────────────────│─────────────────────┘
+                                         │ Direct API calls
+                              ┌──────────▼──────────┐
+                              │   AI Provider of     │
+                              │   your choice        │
+                              └──────────────────────┘
+                                         │
+                              ┌──────────▼──────────┐
+                              │   Your Database      │
+                              │  (Postgres/MySQL/    │
+                              │   SQL Server)        │
+                              └──────────────────────┘
+```
+
+- **Privacy first** — your schema and queries go directly to the AI provider you chose, not through any SQLingo server.
+- **Local persistence** — chat history, connections, and agent configs live in `~/.sqlingo/` as SQLite files.
+
+---
+
+## Quick Start
 
 ### Prerequisites
 - **Node.js** 18+
 - **Python** 3.10+
 
-### Setup
+### 1. Clone & install
 
-1. **Install Dependencies:**
-   ```bash
-   # Backend
-   cd desktop/backend
-   python -m venv venv
-   source venv/bin/activate  # Windows: venv\Scripts\activate
-   pip install -r requirements.txt
+```bash
+git clone https://github.com/PeerAbitbul/SQLingo.git
+cd SQLingo
+```
 
-   # Frontend
-   cd ../frontend
-   npm install
-   ```
+**Backend:**
+```bash
+cd desktop/backend
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp env.example .env             # edit if needed
+```
 
-2. **Run in Development:**
-   ```bash
-   # Start the app
-   cd desktop/frontend
-   npm run electron:dev
-   ```
+**Frontend:**
+```bash
+cd desktop/frontend
+npm install
+cp env.example .env
+```
+
+### 2. Run in development
+
+```bash
+cd desktop/frontend
+npm run electron:dev
+```
+
+The Electron app starts the Python backend automatically.
 
 ---
 
-## 📦 Building Distributions
+## Building a distributable
 
 ```bash
 cd desktop/frontend
 
-# macOS
-npm run electron:build:mac
-
-# Windows  
-npm run electron:build:win
-
-# Linux
-npm run electron:build:linux
+npm run electron:build:mac      # → .dmg
+npm run electron:build:win      # → .exe installer
+npm run electron:build:linux    # → .AppImage / .deb
 ```
 
 ---
 
-## 📖 Documentation
+## Project Structure
 
-| Document | Description |
-|----------|-------------|
-| [docs/QUICK_START.md](docs/QUICK_START.md) | Getting started guide |
-| [docs/EXECUTION_PLAN_FEATURE.md](docs/EXECUTION_PLAN_FEATURE.md) | Query performance analysis |
-| [docs/BUILD_GUIDE.md](docs/BUILD_GUIDE.md) | Packaging instructions |
+```
+SQLingo/
+├── desktop/
+│   ├── frontend/               Electron + React (TypeScript)
+│   │   ├── electron/           Main process & preload
+│   │   └── src/
+│   │       ├── components/     UI components
+│   │       ├── stores/         Zustand state
+│   │       └── utils/          API client, helpers
+│   │
+│   └── backend/                Python FastAPI (runs locally)
+│       ├── ai/                 AI provider integrations
+│       ├── api/                HTTP routes
+│       ├── database/           DB connectors & schema extractor
+│       ├── agent/              Autonomous agent scheduler
+│       └── execution_plan/     SQL Server plan analyzer
+│
+├── docs/                       Additional documentation
+└── scripts/                    Build & utility scripts
+```
 
 ---
 
-## 📝 License
+## Contributing
 
-Distributed under the MIT License. See `LICENSE` for more information.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, code conventions, and how to add a new AI provider or database type.
 
 ---
 
-**Made for developers who want a powerful, private, and free database assistant.**
+## License
+
+MIT — see [LICENSE](LICENSE).

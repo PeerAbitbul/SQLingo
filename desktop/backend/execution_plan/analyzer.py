@@ -154,7 +154,6 @@ class ExecutionPlanAnalyzer:
         missing_indexes = []
 
         for idx_data in missing_idx_data:
-            # Estimate improvement description
             impact = idx_data['impact']
             if impact >= 90:
                 improvement = "Very High (90%+)"
@@ -165,19 +164,46 @@ class ExecutionPlanAnalyzer:
             else:
                 improvement = "Low (<50%)"
 
+            create_index_sql = self._generate_create_index_sql(idx_data)
+
             missing_indexes.append(MissingIndex(
                 table_name=idx_data['table'],
                 equality_columns=idx_data['equality_columns'],
                 inequality_columns=idx_data['inequality_columns'],
                 included_columns=idx_data['included_columns'],
                 impact=round(impact, 2),
-                estimated_improvement=improvement
+                estimated_improvement=improvement,
+                create_index_sql=create_index_sql
             ))
 
-        # Sort by impact (descending)
         missing_indexes.sort(key=lambda x: x.impact, reverse=True)
-
         return missing_indexes
+
+    def _generate_create_index_sql(self, idx_data: Dict[str, Any]) -> str:
+        """Generate a CREATE INDEX DDL statement from missing index data."""
+        table = idx_data.get('table', 'UnknownTable')
+        eq_cols = idx_data.get('equality_columns', [])
+        ineq_cols = idx_data.get('inequality_columns', [])
+        inc_cols = idx_data.get('included_columns', [])
+
+        key_cols = eq_cols + ineq_cols
+        if not key_cols:
+            return ''
+
+        # Build a readable index name
+        col_part = '_'.join(c.lstrip('[').rstrip(']') for c in key_cols[:3])
+        table_part = table.split('.')[-1].strip('[').strip(']')
+        index_name = f"IX_{table_part}_{col_part}"
+
+        key_str = ', '.join(key_cols)
+        sql = f"CREATE NONCLUSTERED INDEX [{index_name}]\nON {table} ({key_str})"
+
+        if inc_cols:
+            inc_str = ', '.join(inc_cols)
+            sql += f"\nINCLUDE ({inc_str})"
+
+        sql += ';'
+        return sql
 
     def _create_summary(
         self,

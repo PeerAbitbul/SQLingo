@@ -52,6 +52,7 @@ class MissingIndex(BaseModel):
     included_columns: List[str]
     impact: float  # 0-100
     estimated_improvement: str
+    create_index_sql: Optional[str] = None
 
 
 class CostMetrics(BaseModel):

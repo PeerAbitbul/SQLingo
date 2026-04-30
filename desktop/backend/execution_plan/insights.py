@@ -70,7 +70,15 @@ def _create_insights_prompt(analysis: Dict[str, Any], statement: str) -> str:
     # Format expensive operations
     expensive_ops_text = _format_expensive_operations(expensive_ops)
 
-    prompt = f"""You are a SQL Server performance expert. Analyze this execution plan and provide optimization insights.
+    # Attach create_index_sql for each missing index if available
+    missing_index_sqls = []
+    for idx in missing_indexes:
+        sql = getattr(idx, 'create_index_sql', None)
+        if sql:
+            missing_index_sqls.append(sql)
+    index_sql_block = '\n\n'.join(f"```sql\n{s}\n```" for s in missing_index_sqls) if missing_index_sqls else ''
+
+    prompt = f"""You are a SQL Server performance expert. Analyze this execution plan and provide deep, actionable insights with concrete code.
 
 **SQL Statement:**
 ```sql
@@ -86,8 +94,9 @@ def _create_insights_prompt(analysis: Dict[str, Any], statement: str) -> str:
 **Bottlenecks Identified:**
 {bottlenecks_text}
 
-**Missing Indexes:**
+**Missing Indexes (auto-detected by SQL Server):**
 {missing_indexes_text}
+{('**Suggested CREATE INDEX statements:**\n' + index_sql_block) if index_sql_block else ''}
 
 **Top Expensive Operations:**
 {expensive_ops_text}
@@ -97,19 +106,31 @@ def _create_insights_prompt(analysis: Dict[str, Any], statement: str) -> str:
 
 ---
 
-Please provide:
+Respond with the following sections. **Include SQL code blocks wherever relevant.**
 
-1. **Root Cause Analysis** - What's causing the performance issues?
+## Root Cause
+One paragraph explaining what's actually causing the slowness. Be specific about which operations and why.
 
-2. **Impact Assessment** - How do these issues affect query performance?
+## Fixes (ordered by impact)
 
-3. **Optimization Strategy** - Specific steps to improve performance (prioritized)
+For each fix, provide:
+- What the problem is
+- The exact SQL to fix it (```sql block```)
+- Why this helps and the expected improvement
 
-4. **Expected Results** - What improvements can be expected from each optimization?
+Must cover:
+- Any missing indexes (use the suggested CREATE INDEX above as a base, refine if needed)
+- Any implicit type conversions (show the corrected WHERE clause)
+- Any table/index scans on large tables (show the index or query rewrite)
+- Any sort operations that could be eliminated (show how)
 
-5. **Additional Considerations** - Any other factors to consider (indexing strategy, query rewrite, statistics, etc.)
+## Query Rewrite (if applicable)
+If the original query can be rewritten for better performance, show the full rewritten version in a ```sql block```. If no rewrite is needed, skip this section.
 
-Be specific and actionable. Focus on the most impactful optimizations first.
+## Statistics & Maintenance
+Any UPDATE STATISTICS or index rebuild commands that would help, as ```sql blocks```.
+
+Be direct and concrete. Skip generic advice — every recommendation must have runnable code.
 """
 
     return prompt

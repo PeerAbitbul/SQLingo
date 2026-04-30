@@ -30,6 +30,7 @@ export interface MissingIndex {
   included_columns: string[];
   impact: number;
   estimated_improvement: string;
+  create_index_sql?: string;
 }
 
 export interface ExecutionPlanSummary {

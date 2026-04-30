@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── TypeScript type-check ──────────────────────────────────────────────────
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: TypeScript type check
+        working-directory: desktop/frontend
+        run: npx tsc --noEmit
+
+  # ── Python syntax / import check ──────────────────────────────────────────
+  python-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: desktop/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check for syntax errors
+        working-directory: desktop/backend
+        run: python -m py_compile main.py api/routes.py ai/client.py database/connection.py
+
+      - name: Verify imports resolve
+        working-directory: desktop/backend
+        run: |
+          python -c "from api.routes import router"
+          python -c "from ai.client import AIClient"
+          python -c "from database.connection import DatabaseConnection"
+          python -c "from database.query_log_storage import QueryLogStorage"
+          python -c "from ai.openrouter_provider import OpenRouterProvider"

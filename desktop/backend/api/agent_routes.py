@@ -1,12 +1,16 @@
 from fastapi import APIRouter
 from database.agent_storage import agent_db
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 router = APIRouter()
 
 class MarkReadRequest(BaseModel):
     message_ids: List[str]
+
+class ObserverConfigRequest(BaseModel):
+    keys: Dict[str, str]   # {"claude": "sk-ant-...", "openai": "sk-...", "gemini": "..."}
+    models: Dict[str, str] # {"claude": "claude-3-5-sonnet...", ...}
 
 @router.get("/messages")
 async def get_agent_messages():
@@ -78,3 +82,24 @@ async def get_agent_runs(agent_id: str, limit: int = 10):
     """Get recent execution history for a specific agent"""
     runs = agent_db.get_agent_runs(agent_id, limit=limit)
     return {"success": True, "runs": runs}
+
+@router.post("/observer-config")
+async def save_observer_config(request: ObserverConfigRequest):
+    """Save AI provider keys for use by the background observer"""
+    from database.storage import get_storage
+    storage = get_storage()
+    import json
+    storage.set_setting('observer_keys', json.dumps(request.keys))
+    storage.set_setting('observer_models', json.dumps(request.models))
+    return {"success": True}
+
+@router.get("/observer-config")
+async def get_observer_config():
+    """Get observer AI config status (no keys exposed)"""
+    from database.storage import get_storage
+    import json
+    storage = get_storage()
+    raw = storage.get_setting('observer_keys') or '{}'
+    keys = json.loads(raw)
+    configured_providers = [p for p, k in keys.items() if k]
+    return {"success": True, "configured_providers": configured_providers}

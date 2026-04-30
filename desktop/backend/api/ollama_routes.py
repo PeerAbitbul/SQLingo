@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ai.ollama_provider import OllamaProvider
-from ai.ollama_catalog import GEMMA4_CATALOG
+from ai.ollama_catalog import MODEL_CATALOG
 from utils.hardware_detector import detect_hardware, recommend_models
 
 logger = logging.getLogger(__name__)
@@ -53,12 +53,12 @@ async def get_hardware():
 @router.get("/catalog")
 async def get_catalog(base_url: Optional[str] = None):
     """
-    Return Gemma 4 catalog with fit badges + other installed models.
+    Return full model catalog with fit badges + other installed models.
     """
     hardware = detect_hardware()
-    gemma = recommend_models(GEMMA4_CATALOG, hardware)
+    catalog = recommend_models(MODEL_CATALOG, hardware)
 
-    # Fetch other installed models from Ollama
+    # Fetch other installed models not in the catalog
     other_installed = []
     url = base_url or OllamaProvider.DEFAULT_BASE_URL
     version = OllamaProvider.is_ollama_running(url)
@@ -66,13 +66,14 @@ async def get_catalog(base_url: Optional[str] = None):
         try:
             provider = OllamaProvider(base_url=url)
             all_models = provider.get_available_models()
-            gemma_ids = {m["id"] for m in GEMMA4_CATALOG}
-            other_installed = [m for m in all_models if m not in gemma_ids]
+            catalog_ids = {m["id"] for m in MODEL_CATALOG}
+            other_installed = [m for m in all_models if m not in catalog_ids]
         except Exception as e:
             logger.warning(f"Failed to list Ollama models: {e}")
 
     return {
-        "gemma": gemma,
+        "catalog": catalog,
+        "gemma": [m for m in catalog if m.get("family") == "Gemma 4"],  # backward compat
         "other_installed": other_installed,
         "hardware": hardware,
     }

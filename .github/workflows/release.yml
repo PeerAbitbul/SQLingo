@@ -1,4 +1,4 @@
-name: Build & Release SQLingo
+name: Build & Release
 
 on:
   push:
@@ -9,28 +9,29 @@ permissions:
   contents: write
 
 jobs:
-  # ==================================================
-  # Step 1: Build Python backend with PyInstaller
-  # ==================================================
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. Build Python backend with PyInstaller — one job per OS
+  # ──────────────────────────────────────────────────────────────────────────
   build-backend:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-13        # Intel runner — can still cross-compile arm64
             platform: mac
           - os: windows-latest
             platform: win
+          - os: ubuntu-22.04
+            platform: linux
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.11'
 
       - name: Install Python dependencies
         working-directory: desktop/backend
@@ -40,8 +41,7 @@ jobs:
 
       - name: Build backend with PyInstaller
         working-directory: desktop/backend
-        run: |
-          pyinstaller db-chat-backend.spec --clean
+        run: pyinstaller db-chat-backend.spec --clean --noconfirm
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
@@ -50,39 +50,41 @@ jobs:
           path: desktop/backend/dist/db-chat-backend*
           retention-days: 1
 
-  # ==================================================
-  # Step 2: Build Electron app and publish to GitHub Releases
-  # ==================================================
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. Bundle Electron app and publish to GitHub Releases
+  # ──────────────────────────────────────────────────────────────────────────
   build-electron:
     needs: build-backend
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-13
             platform: mac
             electron_args: --mac
           - os: windows-latest
             platform: win
             electron_args: --win
+          - os: ubuntu-22.04
+            platform: linux
+            electron_args: --linux
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download backend artifact
+      - name: Download backend binary
         uses: actions/download-artifact@v4
         with:
           name: backend-${{ matrix.platform }}
           path: desktop/frontend/resources/
 
-      - name: Make backend executable (Mac/Linux)
+      - name: Make backend executable (macOS / Linux)
         if: matrix.platform != 'win'
         run: chmod +x desktop/frontend/resources/db-chat-backend
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -92,7 +94,7 @@ jobs:
         working-directory: desktop/frontend
         run: npm ci
 
-      - name: Build and Publish Electron App
+      - name: Build & publish Electron app
         working-directory: desktop/frontend
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}

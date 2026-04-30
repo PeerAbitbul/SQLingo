@@ -19,6 +19,7 @@ import { apiClient } from '../utils/api';
 import { withRetry, RetryPresets } from '../utils/retry';
 import { logDebug } from '../utils/errorLogger';
 import { getBackendUrl } from '../utils/portConfig';
+import { showDialog } from '../stores/dialogStore';
 
 const Container = styled.div`
   display: flex;
@@ -166,18 +167,73 @@ export const ChatWindow = () => {
     }
   };
 
+  const isWriteQuery = (sql: string): boolean => {
+    const first = sql.trim().replace(/^--[^\n]*\n/gm, '').trim().toUpperCase();
+    return /^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|RENAME|REPLACE|MERGE|EXEC|EXECUTE|CALL)\b/.test(first);
+  };
+
   const handleRunQuery = async (sql: string) => {
     if (!currentChat || !currentConnection) {
       showToast.warning('Please select a database connection');
       return;
     }
 
+    const connectionString = buildConnectionString(currentConnection);
+
+    // Write query path — confirm then execute-action
+    if (isWriteQuery(sql)) {
+      const confirmed = await showDialog.confirm({
+        message: `This will execute a write operation on "${currentConnection.name}".\n\nAre you sure you want to proceed?`,
+        variant: 'danger',
+      });
+      if (!confirmed) return;
+
+      try {
+        showToast.info('Executing...');
+        const result = await apiClient.executeActionQuery({
+          connection_string: connectionString,
+          database_type: currentConnection.databaseType,
+          sql_query: sql,
+          connection_name: currentConnection.name,
+        });
+
+        if (result.success) {
+          const rowsMsg = result.affected_rows > 0 ? ` (${result.affected_rows} rows affected)` : '';
+          showToast.success(`Executed successfully${rowsMsg}`);
+          addMessage(currentChat.id, {
+            id: uuidv4(),
+            role: 'assistant',
+            content: `✓ Executed successfully${rowsMsg}`,
+            timestamp: new Date(),
+          });
+        } else {
+          showToast.error(`Execution failed: ${result.error}`);
+          addMessage(currentChat.id, {
+            id: uuidv4(),
+            role: 'assistant',
+            content: `Error executing query: ${result.error}`,
+            timestamp: new Date(),
+          });
+        }
+      } catch (error: any) {
+        const errorMsg = error?.message || String(error);
+        showToast.error(`Execution failed: ${errorMsg}`);
+        addMessage(currentChat.id, {
+          id: uuidv4(),
+          role: 'assistant',
+          content: `Error executing query: ${errorMsg}`,
+          timestamp: new Date(),
+        });
+      }
+      return;
+    }
+
+    // Read-only SELECT path
     try {
       const connectionString = buildConnectionString(currentConnection);
 
       showToast.info('Executing query...');
 
-      // Use retry logic for query execution
       const API_BASE_URL = await getBackendUrl();
       const result = await withRetry(
         async () => {
@@ -206,20 +262,11 @@ export const ChatWindow = () => {
       );
 
       if (result.success) {
-        // Find the message with this SQL and update it with results
-        // Normalize SQL for comparison (remove extra whitespace)
         const normalizedSql = sql.trim().replace(/\s+/g, ' ');
-
         const updatedMessages = currentChat.messages.map((msg) => {
           const normalizedMsgSql = msg.sqlQuery?.trim().replace(/\s+/g, ' ');
           if (normalizedMsgSql === normalizedSql && msg.role === 'assistant') {
-            return {
-              ...msg,
-              queryResults: {
-                columns: result.columns,
-                rows: result.rows,
-              },
-            };
+            return { ...msg, queryResults: { columns: result.columns, rows: result.rows } };
           }
           return msg;
         });
@@ -233,7 +280,6 @@ export const ChatWindow = () => {
         }
       } else {
         showToast.error(`Query execution failed: ${result.error}`);
-        // Add error message
         addMessage(currentChat.id, {
           id: uuidv4(),
           role: 'assistant',

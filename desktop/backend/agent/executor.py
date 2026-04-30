@@ -27,55 +27,68 @@ def execute_agent_job(agent_id: str):
             print(f"[AGENT: {agent_id}] Agent is inactive. Skipping.")
             return
 
-        # 2. Execute target SQL
+        # 2. Connect to DB
         query_logic = agent.get('query_logic', '')
-        print(f"[AGENT: {agent_id}] Executing logic: {query_logic}")
-        
+        agent_type = agent.get('agent_type', 'monitor')
+        print(f"[AGENT: {agent_id}] Type={agent_type}, Executing: {query_logic[:80]}")
+
         target_conn = agent.get('destination_config', {})
         if not target_conn or not target_conn.get('connection_string'):
             raise ValueError("No connection_string found in agent configuration")
-            
+
         from database.connection import DatabaseConnection
         db = DatabaseConnection(
             target_conn.get('connection_string'),
             target_conn.get('database_type')
         )
-        
-        # Execute query
-        result = db.execute_select(query_logic, limit=100)
-        
-        # Create Message format
-        message_str = f"**Agent Alert:** {agent.get('name')}\n"
-        message_str += f"*Executed at: {now_str}*\n"
-        message_str += f"---\n\n"
-        
-        row_count = len(result.get('rows', []))
-        
-        if row_count > 0:
-            message_str += f"**Found {row_count} result(s):**\n\n"
-            # Format as markdown table
-            headers = " | ".join(str(h) for h in result.get('columns', []))
-            separator = " | ".join(["---"] * len(result.get('columns', [])))
-            
-            message_str += f"| {headers} |\n| {separator} |\n"
-            for row in result['rows']:
-                row_str = " | ".join(str(cell) for cell in row)
-                message_str += f"| {row_str} |\n"
+
+        message_str = f"**Agent: {agent.get('name')}**\n"
+        message_str += f"*{datetime.now().strftime('%d/%m/%Y %H:%M')}*\n---\n\n"
+
+        if agent_type == 'action':
+            # Run a write query (INSERT / UPDATE / DELETE / EXEC)
+            action_result = db.execute_action(query_logic)
+            affected = action_result.get('affected_rows', 0)
+            message_str += f"Action executed successfully. Rows affected: **{affected}**"
+            row_count = affected
+
+        elif agent_type == 'conditional':
+            # Check condition first, then run action if triggered
+            import json as _json
+            steps = _json.loads(query_logic) if query_logic.strip().startswith('[') else None
+            if not steps or len(steps) < 2:
+                raise ValueError("Conditional agent requires query_logic as JSON array: [condition_sql, action_sql]")
+
+            condition_sql, action_sql = steps[0], steps[1]
+            check = db.execute_select(condition_sql, limit=1)
+            row_count = len(check.get('rows', []))
+
+            if row_count > 0:
+                action_result = db.execute_action(action_sql)
+                affected = action_result.get('affected_rows', 0)
+                message_str += f"Condition met ({row_count} row(s)). "
+                message_str += f"Action executed — rows affected: **{affected}**"
+            else:
+                message_str += "Condition check returned 0 rows. No action taken."
+
         else:
-            message_str += "Query returned 0 rows.\n"
-            
-        print(f"[AGENT: {agent_id}] Sending to destination: {agent.get('destination')}")
-        
-        if agent.get('destination', 'local') == 'local':
-            # Save to local agent_messages inbox
-            agent_db.add_message(agent_id, message_str)
-        else:
-            print(f"[AGENT: {agent_id}] Destination {agent.get('destination')} is not fully implemented yet, fallback to local.")
-            agent_db.add_message(agent_id, message_str)
-        
-        # Update DB Last Run 
+            # Default: monitor — read-only SELECT
+            result = db.execute_select(query_logic, limit=100)
+            row_count = len(result.get('rows', []))
+
+            if row_count > 0:
+                message_str += f"**Found {row_count} result(s):**\n\n"
+                headers = " | ".join(str(h) for h in result.get('columns', []))
+                separator = " | ".join(["---"] * len(result.get('columns', [])))
+                message_str += f"| {headers} |\n| {separator} |\n"
+                for row in result['rows']:
+                    message_str += f"| {' | '.join(str(c) for c in row)} |\n"
+            else:
+                message_str += "Query returned 0 rows."
+
+        agent_db.add_message(agent_id, message_str)
         agent_db.update_agent_status(agent_id, now_str, "SUCCESS")
-        agent_db.add_run_log(agent_id, status='SUCCESS', row_count=row_count, summary=f'Query returned {row_count} row(s)')
+        agent_db.add_run_log(agent_id, status='SUCCESS', row_count=row_count, summary=message_str[:120])
         
     except Exception as e:
         print(f"[AGENT: {agent_id}] CRITICAL ERROR: {e}")
@@ -89,91 +102,87 @@ def execute_agent_job(agent_id: str):
 def execute_observer_job():
     """
     Default system observer job.
-    Scans all active agents' connections for anomalies.
-    Does NOT require a specific agent_id — it's a system-level scan.
+    Scans all saved DB connections for anomalies using the stored AI config.
     """
     try:
         print(f"[OBSERVER] Proactive scan starting at {datetime.now().isoformat()}")
 
-        # Get all active agents to find valid connection configs
-        all_agents = agent_db.get_all_agents(active_only=True)
+        ai_client = _get_observer_ai_client()
+        if not ai_client:
+            print("[OBSERVER] No AI client configured. Go to Settings → API Keys to enable observer.")
+            return
 
-        # Collect unique connection configs
-        seen_conns = set()
-        connections_to_scan = []
-        for agent in all_agents:
-            config = agent.get('destination_config', {})
-            conn_str = config.get('connection_string', '')
-            db_type = config.get('database_type', '')
-            if conn_str and db_type and conn_str not in seen_conns:
-                seen_conns.add(conn_str)
-                connections_to_scan.append({'connection_string': conn_str, 'database_type': db_type})
+        # Get all saved connections from the main encrypted DB
+        from encryption.cipher import get_db
+        all_connections = get_db().get_all_connections()
 
-        if not connections_to_scan:
-            print("[OBSERVER] No active connections found to scan. Skipping.")
+        if not all_connections:
+            print("[OBSERVER] No saved connections found. Skipping.")
             return
 
         from agent.observer import run_proactive_observation
-        from ai.client import AIClient
 
-        for conn_info in connections_to_scan:
+        for conn_info in all_connections:
+            conn_name = conn_info.get('name', 'Unknown')
             try:
-                # Try to create a minimal AI client
-                # The observer uses whatever provider/key is available
-                # For now, we'll attempt with environment-level keys or skip
-                ai_client = _get_observer_ai_client()
-                if not ai_client:
-                    print("[OBSERVER] No AI client available for observation. Skipping.")
-                    return
-
                 alert = run_proactive_observation(
                     conn_info['connection_string'],
                     conn_info['database_type'],
                     ai_client
                 )
-
                 if alert:
-                    message = f"**Proactive Database Scan**\n"
-                    message += f"*Scanned at: {datetime.now().isoformat()}*\n"
-                    message += f"---\n\n"
+                    message = f"**Proactive Scan — {conn_name}**\n"
+                    message += f"*{datetime.now().strftime('%d/%m/%Y %H:%M')}*\n---\n\n"
                     message += alert
-
-                    # Store as a system message (agent_id = "observer")
                     agent_db.add_message("observer", message)
-                    print(f"[OBSERVER] Anomaly detected and saved to inbox.")
+                    print(f"[OBSERVER] Anomaly detected in '{conn_name}'.")
                 else:
-                    print(f"[OBSERVER] All clear for {conn_info['database_type']} connection.")
+                    print(f"[OBSERVER] All clear for '{conn_name}'.")
             except Exception as conn_err:
-                print(f"[OBSERVER] Error scanning connection: {conn_err}")
+                print(f"[OBSERVER] Error scanning '{conn_name}': {conn_err}")
 
     except Exception as e:
         print(f"[OBSERVER] CRITICAL ERROR: {e}")
 
 
 def _get_observer_ai_client():
-    """Try to build an AI client from environment variables for the observer."""
+    """Build an AI client from keys saved via the observer-config endpoint."""
     try:
+        import json
         from ai.client import AIClient
-        from ai.providers.base import AIProvider
+        from ai.providers import AIProvider
+        from database.storage import get_storage
 
-        api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('GEMINI_API_KEY')
-        if api_key:
-            # Determine provider
-            if os.environ.get('OPENAI_API_KEY'):
-                provider = AIProvider.OPENAI
-            elif os.environ.get('ANTHROPIC_API_KEY'):
-                provider = AIProvider.CLAUDE
-            else:
-                provider = AIProvider.GEMINI
-            return AIClient(provider=provider, api_key=api_key)
+        storage = get_storage()
 
-        # Try Ollama as fallback (no key needed)
+        # Try keys saved from the frontend (via /api/agents/observer-config)
+        raw_keys = storage.get_setting('observer_keys')
+        keys = json.loads(raw_keys) if raw_keys else {}
+
+        provider_map = [
+            ('claude', AIProvider.CLAUDE),
+            ('openai', AIProvider.OPENAI),
+            ('gemini', AIProvider.GEMINI),
+        ]
+        for name, provider_enum in provider_map:
+            key = keys.get(name, '').strip()
+            if key:
+                return AIClient(provider=provider_enum, api_key=key)
+
+        # Fallback: env vars
+        if os.environ.get('ANTHROPIC_API_KEY'):
+            return AIClient(provider=AIProvider.CLAUDE, api_key=os.environ['ANTHROPIC_API_KEY'])
+        if os.environ.get('OPENAI_API_KEY'):
+            return AIClient(provider=AIProvider.OPENAI, api_key=os.environ['OPENAI_API_KEY'])
+        if os.environ.get('GEMINI_API_KEY'):
+            return AIClient(provider=AIProvider.GEMINI, api_key=os.environ['GEMINI_API_KEY'])
+
+        # Fallback: Ollama (no key needed)
         try:
-            import requests
-            resp = requests.get('http://localhost:11434/api/tags', timeout=2)
-            if resp.status_code == 200:
-                return AIClient(provider=AIProvider.OLLAMA)
-        except:
+            import urllib.request
+            urllib.request.urlopen('http://localhost:11434/api/tags', timeout=2)
+            return AIClient(provider=AIProvider.OLLAMA)
+        except Exception:
             pass
 
         return None
