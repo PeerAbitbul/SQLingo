@@ -825,7 +825,7 @@ Return ONLY the title, nothing else."""
 
 from execution_plan.parser import ExecutionPlanParser
 from execution_plan.analyzer import ExecutionPlanAnalyzer
-from execution_plan.insights import get_ai_insights, generate_summary_for_chat
+from execution_plan.insights import get_ai_insights, get_ai_comparison
 from execution_plan.models import ExecutionPlanRequest, ExecutionPlanResponse
 
 
@@ -843,9 +843,63 @@ async def analyze_execution_plan(
     try:
         parser = ExecutionPlanParser()
         parsed_plan = parser.parse(request.xml_content)
-        
+
         analyzer = ExecutionPlanAnalyzer()
         analysis = analyzer.analyze(parsed_plan)
+
+        # ── Comparison mode: two plans submitted ──────────────────────────────
+        if request.xml_content_2:
+            parser2 = ExecutionPlanParser()
+            parsed_plan_2 = parser2.parse(request.xml_content_2)
+            analyzer2 = ExecutionPlanAnalyzer()
+            analysis_2 = analyzer2.analyze(parsed_plan_2)
+
+            ai_insights = None
+            if request.ai_provider:
+                try:
+                    if request.ai_provider == 'bedrock':
+                        if not request.bedrock_config:
+                            raise ValueError("AWS credentials required for Bedrock")
+                        ai_client = AIClient(
+                            provider=AIProvider.BEDROCK,
+                            bedrock_config={
+                                'access_key': request.bedrock_config.access_key,
+                                'secret_key': request.bedrock_config.secret_key,
+                                'region': request.bedrock_config.region
+                            }
+                        )
+                    elif request.ai_provider == 'ollama':
+                        ai_client = AIClient(
+                            provider=AIProvider.OLLAMA,
+                            ollama_base_url=request.ollama_base_url
+                        )
+                    else:
+                        if not request.api_key:
+                            raise ValueError("API key required")
+                        ai_client = AIClient(
+                            provider=AIProvider(request.ai_provider),
+                            api_key=request.api_key,
+                            auth_mode=request.auth_mode or 'api_key'
+                        )
+                    ai_insights = await get_ai_comparison(
+                        ai_client, analysis, analysis_2,
+                        parsed_plan['statement'], parsed_plan_2['statement'],
+                        model=request.ai_model,
+                    )
+                except Exception as e:
+                    print(f"AI comparison failed: {str(e)}")
+                    ai_insights = f"AI comparison unavailable: {str(e)}"
+
+            return ExecutionPlanResponse(
+                summary=analysis['summary'],
+                operations=analysis['expensive_operations'],
+                bottlenecks=analysis['bottlenecks'],
+                missing_indexes=analysis['missing_indexes'],
+                recommendations=analysis['recommendations'],
+                ai_insights=ai_insights,
+                success=True
+            )
+        # ─────────────────────────────────────────────────────────────────────
 
         # Get AI insights if provider specified
         ai_insights = None
@@ -854,10 +908,8 @@ async def analyze_execution_plan(
             # BYOK Mode - Use user's API key or credentials
             try:
                 if request.ai_provider == 'bedrock':
-                    # Bedrock uses AWS credentials
                     if not request.bedrock_config:
                         raise ValueError("AWS credentials required for Bedrock")
-
                     ai_client = AIClient(
                         provider=AIProvider.BEDROCK,
                         bedrock_config={
@@ -866,11 +918,14 @@ async def analyze_execution_plan(
                             'region': request.bedrock_config.region
                         }
                     )
+                elif request.ai_provider == 'ollama':
+                    ai_client = AIClient(
+                        provider=AIProvider.OLLAMA,
+                        ollama_base_url=getattr(request, 'ollama_base_url', None)
+                    )
                 else:
-                    # Other providers use API key or access token
                     if not request.api_key:
                         raise ValueError("API key or access token required")
-
                     ai_client = AIClient(
                         provider=AIProvider(request.ai_provider),
                         api_key=request.api_key,
@@ -881,13 +936,40 @@ async def analyze_execution_plan(
                     ai_client,
                     analysis,
                     parsed_plan['statement'],
-                    model=request.ai_model
+                    model=request.ai_model,
+                    connected_database=request.connected_database,
+                    connected_db_type=request.connected_db_type,
                 )
             except Exception as e:
                 # AI insights failed, but continue with analysis
                 print(f"AI insights failed: {str(e)}")
                 ai_insights = f"AI analysis unavailable: {str(e)}"
 
+
+        # Prepend disclaimer in backend code — never rely on AI model to write it
+        if ai_insights:
+            plan_summary = analysis.get('summary')
+            plan_db_raw = (plan_summary.database_name or '') if plan_summary else ''
+            plan_db = plan_db_raw.strip('[]').lower()
+            conn_db = request.connected_database.strip('[]').lower() if request.connected_database else None
+
+            if conn_db and plan_db and plan_db == conn_db:
+                pass  # Same DB — no disclaimer needed
+            elif conn_db and plan_db and plan_db != conn_db:
+                disclaimer = (
+                    f"> **Note:** This execution plan is from database `{plan_db_raw or 'unknown'}`, "
+                    f"but you are connected to `{request.connected_database}` ({request.connected_db_type or 'unknown'}). "
+                    f"Recommendations are based solely on the execution plan XML — actual schema was not verified.\n\n"
+                )
+                ai_insights = disclaimer + ai_insights
+            else:
+                # plan has no DB, or no connection — always add disclaimer
+                disclaimer = (
+                    f"> **Note:** Recommendations are based solely on the execution plan XML"
+                    + (f" (connected to `{request.connected_database}`, but plan source database is unknown)" if conn_db else "")
+                    + ". Actual database schema was not verified.\n\n"
+                )
+                ai_insights = disclaimer + ai_insights
 
         # Return analysis results
         return ExecutionPlanResponse(

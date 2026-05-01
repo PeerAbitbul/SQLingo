@@ -3,7 +3,7 @@ XML Parser for SQL Server Execution Plans (.sqlplan files)
 """
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Any
-from execution_plan.models import Operation, CostMetrics, ExecutionPlanSummary
+from execution_plan.models import Operation, CostMetrics
 
 
 class ExecutionPlanParser:
@@ -232,46 +232,49 @@ class ExecutionPlanParser:
         """Extract missing index suggestions"""
         missing_indexes = []
 
-        for missing_idx in root.findall(
-            './/plan:MissingIndexes/plan:MissingIndexGroup/plan:MissingIndex',
+        # Iterate at the MissingIndexGroup level so we can read Impact directly
+        for group in root.findall(
+            './/plan:MissingIndexes/plan:MissingIndexGroup',
             self.NAMESPACES
         ):
-            # Get impact
-            group = missing_idx.find('../..', self.NAMESPACES)
-            impact = float(group.get('Impact', 0)) if group is not None else 0
+            impact = float(group.get('Impact', 0))
 
-            # Get table
-            table = missing_idx.get('Table', 'Unknown')
+            for missing_idx in group.findall('plan:MissingIndex', self.NAMESPACES):
+                # Get table — XML attributes already contain brackets, strip before re-wrapping
+                def _b(s: str) -> str:
+                    return s.strip('[]')
 
-            # Get columns
-            equality_cols = []
-            inequality_cols = []
-            included_cols = []
+                raw_table = missing_idx.get('Table', 'Unknown')
+                raw_database = missing_idx.get('Database', '')
+                raw_schema = missing_idx.get('Schema', '')
+                database = _b(raw_database)
+                schema = _b(raw_schema)
+                table = raw_table  # keep original brackets on table name
+                if database and schema:
+                    table = f"[{database}].[{schema}].{table}"
+                elif schema:
+                    table = f"[{schema}].{table}"
 
-            # Equality columns (WHERE col = value)
-            col_group = missing_idx.find('.//plan:ColumnGroup[@Usage="EQUALITY"]', self.NAMESPACES)
-            if col_group is not None:
-                for col in col_group.findall('.//plan:Column', self.NAMESPACES):
-                    equality_cols.append(col.get('Name', ''))
+                equality_cols = []
+                inequality_cols = []
+                included_cols = []
 
-            # Inequality columns (WHERE col > value)
-            col_group = missing_idx.find('.//plan:ColumnGroup[@Usage="INEQUALITY"]', self.NAMESPACES)
-            if col_group is not None:
-                for col in col_group.findall('.//plan:Column', self.NAMESPACES):
-                    inequality_cols.append(col.get('Name', ''))
+                for col_group in missing_idx.findall('plan:ColumnGroup', self.NAMESPACES):
+                    usage = col_group.get('Usage', '')
+                    cols = [col.get('Name', '') for col in col_group.findall('plan:Column', self.NAMESPACES)]
+                    if usage == 'EQUALITY':
+                        equality_cols = cols
+                    elif usage == 'INEQUALITY':
+                        inequality_cols = cols
+                    elif usage == 'INCLUDE':
+                        included_cols = cols
 
-            # Included columns
-            col_group = missing_idx.find('.//plan:ColumnGroup[@Usage="INCLUDE"]', self.NAMESPACES)
-            if col_group is not None:
-                for col in col_group.findall('.//plan:Column', self.NAMESPACES):
-                    included_cols.append(col.get('Name', ''))
-
-            missing_indexes.append({
-                'table': table,
-                'equality_columns': equality_cols,
-                'inequality_columns': inequality_cols,
-                'included_columns': included_cols,
-                'impact': impact
-            })
+                missing_indexes.append({
+                    'table': table,
+                    'equality_columns': equality_cols,
+                    'inequality_columns': inequality_cols,
+                    'included_columns': included_cols,
+                    'impact': impact
+                })
 
         return missing_indexes

@@ -55,36 +55,33 @@ export interface ExecutionPlanAnalysis {
 
 export const analyzeExecutionPlan = async (
   xmlContent: string,
-  mode: 'byok' | 'managed',
   aiProvider?: string,
   aiModel?: string,
   apiKey?: string,
-  token?: string,
   bedrockConfig?: BedrockConfig,
-  authMode?: 'api_key' | 'access_token'
+  authMode?: 'api_key' | 'access_token',
+  ollamaBaseUrl?: string,
+  connectedDatabase?: string,
+  connectedDbType?: string,
+  xmlContent2?: string,
 ): Promise<ExecutionPlanAnalysis> => {
   const apiBaseUrl = await getBackendUrl();
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   const response = await fetch(`${apiBaseUrl}/execution-plan/analyze`, {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       xml_content: xmlContent,
+      xml_content_2: xmlContent2,
       database_type: 'sqlserver',
       ai_provider: aiProvider,
       ai_model: aiModel,
-      mode,
       api_key: apiKey,
       auth_mode: authMode,
       bedrock_config: bedrockConfig,
+      ollama_base_url: ollamaBaseUrl,
+      connected_database: connectedDatabase,
+      connected_db_type: connectedDbType,
     }),
   });
 

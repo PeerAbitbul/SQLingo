@@ -14,14 +14,16 @@ class BedrockConfig(BaseModel):
 class ExecutionPlanRequest(BaseModel):
     """Request to analyze an execution plan"""
     xml_content: str
+    xml_content_2: Optional[str] = None  # Second plan for side-by-side comparison
     database_type: str = "sqlserver"
-    ai_provider: Optional[str] = None  # 'claude', 'openai', 'gemini', 'bedrock'
+    ai_provider: Optional[str] = None  # 'claude', 'openai', 'gemini', 'bedrock', 'ollama', 'openrouter'
     ai_model: Optional[str] = None
-    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock)
+    api_key: Optional[str] = None  # User's own API key (BYOK)
     auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
     bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
-    mode: str = "byok"  # 'byok' or 'managed'
-    token: Optional[str] = None
+    ollama_base_url: Optional[str] = None  # For Ollama local mode
+    connected_database: Optional[str] = None  # Current chat's connected database name
+    connected_db_type: Optional[str] = None   # e.g. 'sqlserver', 'postgresql', 'mysql'
 
 
 class Operation(BaseModel):

@@ -3,8 +3,6 @@ import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatStore } from '../stores/chatStore';
 import { useConnectionStore } from '../stores/connectionStore';
-import { useSettingsStore } from '../stores/settingsStore';
-import { useAPIKeyStore } from '../stores/apiKeyStore';
 import { ChatHeader } from './ChatHeader';
 import { ChatSidebar } from './ChatSidebar';
 import { ChatMessages } from './ChatMessages';
@@ -13,11 +11,9 @@ import { Settings } from './Settings';
 import { AgentsView } from './AgentsView';
 import { ConnectionManager } from './ConnectionManager';
 import { APIKeyManager } from './APIKeyManager';
-import { analyzeExecutionPlan, ExecutionPlanAnalysis } from '../utils/executionPlanApi';
 import { showToast } from '../stores/toastStore';
 import { apiClient } from '../utils/api';
 import { withRetry, RetryPresets } from '../utils/retry';
-import { logDebug } from '../utils/errorLogger';
 import { getBackendUrl } from '../utils/portConfig';
 import { showDialog } from '../stores/dialogStore';
 
@@ -127,8 +123,16 @@ const ChangeButton = styled.button`
   }
 `;
 
+const AIDisclaimer = styled.div`
+  text-align: center;
+  font-size: 11px;
+  color: ${(props) => props.theme.colors.textSecondary};
+  padding: 4px ${(props) => props.theme.spacing.md} 8px;
+  background-color: ${(props) => props.theme.colors.surface};
+`;
+
 export const ChatWindow = () => {
-  const { chats, activeChat, updateChat, addMessage, removeMessage } = useChatStore();
+  const { chats, activeChat, updateChat, addMessage } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -137,7 +141,7 @@ export const ChatWindow = () => {
   const [isConnectionManagerOpen, setIsConnectionManagerOpen] = useState(false);
   const [isAPIKeyManagerOpen, setIsAPIKeyManagerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [isAnalyzingPlan, setIsAnalyzingPlan] = useState(false);
+  const [droppedFile, setDroppedFile] = useState<{ name: string; content: string } | null>(null);
 
   const currentChat = chats.find((c) => c.id === activeChat);
   const currentConnection = currentChat?.connectionId
@@ -328,29 +332,13 @@ export const ChatWindow = () => {
       return;
     }
 
-    // Read and analyze .sqlplan file
+    // Read file and pass to ChatInput for user to add context before sending
     try {
-      // Show user message (file dropped)
-      addMessage(currentChat.id, {
-        id: `user-${Date.now()}`,
-        role: 'user',
-        content: `Dropped file: ${sqlplanFile.name}`,
-        timestamp: new Date(),
-      });
-
       const xmlContent = await sqlplanFile.text();
-
-      await analyzeExecutionPlanFromXML(xmlContent);
+      setDroppedFile({ name: sqlplanFile.name, content: xmlContent });
     } catch (error) {
-      console.error('Failed to analyze execution plan:', error);
-      addMessage(currentChat.id, {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: `Failed to analyze execution plan: ${error}`,
-        timestamp: new Date(),
-      });
-    } finally {
-      setIsAnalyzingPlan(false);
+      console.error('Failed to read file:', error);
+      showToast.error('Failed to read the file');
     }
   };
 
@@ -363,174 +351,6 @@ export const ChatWindow = () => {
     setIsDragging(false);
   };
 
-  // NEW: Analyze execution plan from XML
-  const analyzeExecutionPlanFromXML = async (xmlContent: string) => {
-    const chatId = currentChat?.id;
-    if (!chatId) return;
-
-    // Show analyzing message
-    const analyzingMessageId = `analyzing-${Date.now()}`;
-    addMessage(chatId, {
-      id: analyzingMessageId,
-      role: 'assistant',
-      content: 'Analyzing execution plan...',
-      timestamp: new Date(),
-    });
-
-    // Set analyzing state to block input
-    setIsAnalyzingPlan(true);
-
-    try {
-      // Get settings and API keys
-      const settings = useSettingsStore.getState();
-      const apiKeyStore = useAPIKeyStore.getState();
-
-      const defaultProvider = settings.defaultAIProvider || 'openai';
-
-      // BYOK mode only - no managed mode
-      const mode = 'byok';
-
-      // Get API key and auth mode for selected provider
-      const apiKey = apiKeyStore.getKeyForProvider(defaultProvider);
-      const defaultModel = apiKeyStore.getModelForProvider(defaultProvider);
-      const authMode = apiKeyStore.getAuthModeForProvider(defaultProvider);
-
-      logDebug('Analyzing execution plan', {
-        mode,
-        provider: defaultProvider,
-        model: defaultModel,
-        hasApiKey: !!apiKey,
-        xmlLength: xmlContent.length
-      });
-
-      // Call analysis API
-      const analysis = await analyzeExecutionPlan(
-        xmlContent,
-        mode,
-        defaultProvider,
-        defaultModel,
-        apiKey,
-        undefined, // token
-        undefined, // bedrockConfig
-        authMode
-      );
-
-      logDebug('Analysis result received', {
-        success: analysis.success,
-        hasBottlenecks: analysis.bottlenecks?.length > 0,
-        hasMissingIndexes: analysis.missing_indexes?.length > 0,
-        hasRecommendations: analysis.recommendations?.length > 0
-      });
-
-      // Remove analyzing message
-      removeMessage(chatId, analyzingMessageId);
-
-      if (!analysis.success) {
-        // Show error to user
-        addMessage(chatId, {
-          id: `error-${Date.now()}`,
-          role: 'assistant',
-          content: `Analysis failed: ${analysis.error || 'Unknown error'}`,
-          timestamp: new Date(),
-        });
-        return;
-      }
-
-      // Create analysis result message
-      const resultMessage = createAnalysisMessage(analysis);
-
-      addMessage(chatId, {
-        id: `result-${Date.now()}`,
-        role: 'assistant',
-        content: resultMessage,
-        timestamp: new Date(),
-      });
-    } catch (error) {
-      console.error('Exception in analyzeExecutionPlanFromXML:', error);
-
-      // Remove analyzing message on error too
-      removeMessage(chatId, analyzingMessageId);
-
-      // Show error to user
-      addMessage(chatId, {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: `Error: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: new Date(),
-      });
-    }
-  };
-
-  const createAnalysisMessage = (analysis: ExecutionPlanAnalysis): string => {
-    const lines = [
-      '# Execution Plan Analysis',
-      '',
-    ];
-
-    if (analysis.summary) {
-      lines.push('## Summary');
-      lines.push(`- **Query Cost:** ${analysis.summary.total_cost.toFixed(4)}`);
-      lines.push(`- **Total Operations:** ${analysis.summary.total_operations}`);
-      lines.push(`- **Most Expensive:** ${analysis.summary.most_expensive_operation}`);
-      lines.push('');
-
-      if (analysis.summary.warnings && analysis.summary.warnings.length > 0) {
-        lines.push('### Warnings');
-        analysis.summary.warnings.forEach(w => {
-          lines.push(`- ${w}`);
-        });
-        lines.push('');
-      }
-    }
-
-    if (analysis.bottlenecks.length > 0) {
-      lines.push('## Bottlenecks Found');
-      lines.push('');
-      analysis.bottlenecks.slice(0, 5).forEach((b, idx) => {
-        const severityLabel = b.severity === 'high' ? 'HIGH' : b.severity === 'medium' ? 'MEDIUM' : 'LOW';
-        lines.push(`### ${idx + 1}. ${b.operation_type} (${severityLabel})`);
-        lines.push(`- **Cost:** ${b.cost_percentage.toFixed(1)}% of total`);
-        lines.push(`- **Description:** ${b.description}`);
-        lines.push('');
-      });
-    }
-
-    if (analysis.missing_indexes.length > 0) {
-      lines.push('## Missing Indexes');
-      lines.push('');
-      analysis.missing_indexes.forEach((idx, i) => {
-        lines.push(`### ${i + 1}. ${idx.table_name}`);
-        lines.push(`- **Impact:** ${idx.impact.toFixed(0)}% (${idx.estimated_improvement})`);
-        if (idx.equality_columns.length > 0) {
-          lines.push(`- **Equality Columns:** ${idx.equality_columns.join(', ')}`);
-        }
-        if (idx.inequality_columns.length > 0) {
-          lines.push(`- **Inequality Columns:** ${idx.inequality_columns.join(', ')}`);
-        }
-        if (idx.included_columns.length > 0) {
-          lines.push(`- **Include Columns:** ${idx.included_columns.join(', ')}`);
-        }
-        lines.push('');
-      });
-    }
-
-    if (analysis.recommendations.length > 0) {
-      lines.push('## Recommendations');
-      lines.push('');
-      analysis.recommendations.forEach((rec, idx) => {
-        lines.push(`${idx + 1}. ${rec}`);
-      });
-      lines.push('');
-    }
-
-    if (analysis.ai_insights) {
-      lines.push('## AI Insights');
-      lines.push('');
-      lines.push(analysis.ai_insights);
-    }
-
-    return lines.join('\n');
-  };
 
   return (
     <Container>
@@ -593,7 +413,14 @@ export const ChatWindow = () => {
               onRunQuery={handleRunQuery}
               onFavorite={handleFavorite}
             />
-            <ChatInput chatId={currentChat.id} isAnalyzingPlan={isAnalyzingPlan} />
+            <ChatInput
+              chatId={currentChat.id}
+              pendingFile={droppedFile}
+              onFileConsumed={() => setDroppedFile(null)}
+            />
+            <AIDisclaimer>
+              AI can make mistakes. Always verify SQL before running on production.
+            </AIDisclaimer>
           </ChatArea>
         ) : (
           <EmptyState>
@@ -674,4 +501,5 @@ const DropZoneText = styled.div`
   font-weight: 600;
   color: ${(props) => props.theme.colors.primary};
 `;
+
 

@@ -155,12 +155,29 @@ const Timestamp = styled.span`
   color: ${(props) => props.theme.colors.textSecondary};
 `;
 
+const AttachmentChip = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 6px;
+`;
+
 export const MessageItem = ({ message, onRunQuery, onFavorite }: MessageItemProps) => {
   const isUser = message.role === 'user';
 
   return (
     <MessageContainer $isUser={isUser}>
-      <MessageBubble $isUser={isUser} $isAgentAlert={message.isAgentAlert}>
+      <MessageBubble $isUser={isUser} $isAgentAlert={message.isAgentAlert} dir="auto">
+        {isUser && message.attachmentName && (
+          <AttachmentChip>
+            📎 {message.attachmentName}
+          </AttachmentChip>
+        )}
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSanitize]}

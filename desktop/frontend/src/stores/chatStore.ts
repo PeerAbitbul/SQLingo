@@ -6,6 +6,8 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  hiddenContent?: string;  // included in AI context but not shown in UI (e.g. large XML payloads)
+  attachmentName?: string; // display name of attached file (shown in chat bubble)
   sqlQuery?: string;
   queryResults?: {
     columns: string[];

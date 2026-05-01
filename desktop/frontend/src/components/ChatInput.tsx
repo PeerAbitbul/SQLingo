@@ -12,11 +12,12 @@ import { useOllamaStore } from '../stores/ollamaStore';
 import { InlineLoading } from './Loading';
 import { v4 as uuidv4 } from 'uuid';
 import type { AIProvider } from '../types/aiProvider';
-import { AI_PROVIDER_CONFIGS } from '../types/aiProvider';
 
 interface ChatInputProps {
   chatId: string;
   isAnalyzingPlan?: boolean;
+  pendingFile?: { name: string; content: string } | null;
+  onFileConsumed?: () => void;
 }
 
 const InputContainer = styled.div`
@@ -24,87 +25,60 @@ const InputContainer = styled.div`
   padding: ${(props) => props.theme.spacing.md};
   background-color: ${(props) => props.theme.colors.surface};
   border-top: 1px solid ${(props) => props.theme.colors.border};
-  display: flex;
-  flex-direction: column;
-  gap: ${(props) => props.theme.spacing.sm};
 `;
 
-const TopBar = styled.div`
+const ChatBox = styled.div`
+  position: relative;
+  background-color: ${(props) => props.theme.colors.background};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: 16px;
+  padding: 12px 12px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.2s;
+
+  &:focus-within {
+    border-color: ${(props) => props.theme.colors.primary};
+  }
+`;
+
+const BottomBar = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 ${(props) => props.theme.spacing.xs};
 `;
 
-const ProviderSelectorWrapper = styled.div`
+const LeftActions = styled.div`
   position: relative;
-  flex-shrink: 1;
-  min-width: 0;
   display: flex;
   align-items: center;
+  gap: 6px;
 `;
 
-const ProviderSelectorCompact = styled.div`
+const RightActions = styled.div`
   display: flex;
-  gap: ${(props) => props.theme.spacing.xs};
   align-items: center;
-  overflow-x: auto;
-  scrollbar-width: none;
-  &::-webkit-scrollbar { display: none; }
+  gap: 6px;
 `;
 
-const ScrollArrow = styled.button<{ $visible: boolean }>`
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid ${(p) => p.theme.colors.border};
-  background: ${(p) => p.theme.colors.surface};
-  color: ${(p) => p.theme.colors.textSecondary};
-  font-size: 10px;
+const ProviderPill = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 7px;
+  border-radius: 20px;
+  border: 1px solid ${(props) => props.theme.colors.border};
+  background: transparent;
+  color: ${(props) => props.theme.colors.text};
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  opacity: ${(p) => p.$visible ? 1 : 0};
-  pointer-events: ${(p) => p.$visible ? 'auto' : 'none'};
-  transition: opacity 0.15s, background 0.15s;
-  &:hover { background: ${(p) => p.theme.colors.background}; color: ${(p) => p.theme.colors.text}; }
-`;
-
-const ProviderLabel = styled.span`
-  font-size: 11px;
-  color: ${(props) => props.theme.colors.textSecondary};
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 600;
-`;
-
-const ProviderButton = styled.button<{ $active: boolean; $provider: AIProvider }>`
-  padding: 4px 10px;
-  border-radius: 12px;
-  flex-shrink: 0;
+  transition: background 0.15s;
   white-space: nowrap;
-  border: 1px solid ${(props) => props.$active ? 'transparent' : props.theme.colors.border};
-  background-color: ${(props) => {
-    if (!props.$active) return 'transparent';
-    return AI_PROVIDER_CONFIGS[props.$provider]?.color || props.theme.colors.primary;
-  }};
-  color: ${(props) => props.$active ? '#ffffff' : props.theme.colors.textSecondary};
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 4px;
 
   &:hover {
-    ${(props) => !props.$active && `
-      border-color: ${props.theme.colors.primary};
-      color: ${props.theme.colors.text};
-    `}
+    background: ${(props) => props.theme.colors.surface};
   }
 `;
 
@@ -112,11 +86,106 @@ const ProviderIconWrapper = styled.span`
   display: flex;
   align-items: center;
   justify-content: center;
-  
+
   svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
   }
+`;
+
+const PillModel = styled.span`
+  color: ${(props) => props.theme.colors.textSecondary};
+  font-weight: 400;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`;
+
+const PillChevron = styled.span`
+  font-size: 9px;
+  color: ${(props) => props.theme.colors.textSecondary};
+  margin-left: 1px;
+`;
+
+const ProviderDropdown = styled.div`
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  background: ${(props) => props.theme.colors.surface};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 200;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  min-width: 230px;
+`;
+
+const ProviderOption = styled.button<{ $active: boolean }>`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: ${(props) => props.$active ? props.theme.colors.background : 'transparent'};
+  color: ${(props) => props.theme.colors.text};
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+
+  &:hover {
+    background: ${(props) => props.theme.colors.background};
+  }
+`;
+
+const ProviderOptionLabel = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+`;
+
+const ProviderOptionName = styled.span`
+  font-weight: 500;
+`;
+
+const ProviderOptionModel = styled.span`
+  font-size: 11px;
+  color: ${(props) => props.theme.colors.textSecondary};
+`;
+
+const SendBtn = styled.button`
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: ${(props) => props.theme.colors.primary};
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.2s;
+
+  &:hover {
+    opacity: 0.85;
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+`;
+
+const LoadingBar = styled.div`
+  padding: 2px ${(props) => props.theme.spacing.xs} 4px;
+  color: ${(props) => props.theme.colors.textSecondary};
+  font-size: 11px;
+  text-align: center;
 `;
 
 // Claude Logo (Anthropic style)
@@ -154,63 +223,23 @@ const OllamaLogo = () => (
   </svg>
 );
 
-const InputWrapper = styled.div`
-  display: flex;
-  gap: ${(props) => props.theme.spacing.sm};
-  align-items: flex-end;
-`;
-
-const Input = styled.textarea`
-  flex: 1;
-  padding: ${(props) => props.theme.spacing.sm} ${(props) => props.theme.spacing.md};
-  background-color: ${(props) => props.theme.colors.background};
-  color: ${(props) => props.theme.colors.text};
-  border: 1px solid ${(props) => props.theme.colors.border};
-  border-radius: ${(props) => props.theme.borderRadius.md};
-  font-size: 14px;
+const StyledTextarea = styled.textarea`
+  background: transparent;
+  border: none;
   outline: none;
+  color: ${(props) => props.theme.colors.text};
+  font-size: 14px;
   font-family: inherit;
   resize: none;
   min-height: 42px;
   max-height: 200px;
   overflow-y: auto;
   line-height: 1.5;
-
-  &:focus {
-    border-color: ${(props) => props.theme.colors.primary};
-  }
+  width: 100%;
 
   &::placeholder {
     color: ${(props) => props.theme.colors.textSecondary};
   }
-`;
-
-const SendButton = styled.button`
-  padding: ${(props) => props.theme.spacing.sm} ${(props) => props.theme.spacing.md};
-  background-color: ${(props) => props.theme.colors.primary};
-  color: #ffffff;
-  border: none;
-  border-radius: ${(props) => props.theme.borderRadius.md};
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.2s;
-
-  &:hover {
-    opacity: 0.9;
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-`;
-
-const LoadingIndicator = styled.div`
-  padding: ${(props) => props.theme.spacing.sm};
-  color: ${(props) => props.theme.colors.textSecondary};
-  font-size: 12px;
-  text-align: center;
 `;
 
 const CommandMenuContainer = styled.div`
@@ -257,6 +286,50 @@ const CommandDesc = styled.div`
   margin-top: 2px;
 `;
 
+const AttachBtn = styled.button`
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid ${(props) => props.theme.colors.border};
+  background: transparent;
+  color: ${(props) => props.theme.colors.textSecondary};
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+
+  &:hover {
+    background: ${(props) => props.theme.colors.surface};
+    color: ${(props) => props.theme.colors.text};
+  }
+`;
+
+const AttachmentChip = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: ${(props) => props.theme.colors.surface};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: 8px;
+  font-size: 12px;
+  color: ${(props) => props.theme.colors.text};
+  margin-bottom: 2px;
+`;
+
+const AttachmentRemove = styled.button`
+  background: none;
+  border: none;
+  color: ${(props) => props.theme.colors.textSecondary};
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 0 0 2px;
+  line-height: 1;
+  &:hover { color: ${(props) => props.theme.colors.text}; }
+`;
+
 const SLASH_COMMANDS = [
   { cmd: '/permission mssql', desc: 'Show MSSQL minimum permissions' },
   { cmd: '/permission postgres', desc: 'Show PostgreSQL minimum permissions' },
@@ -264,55 +337,79 @@ const SLASH_COMMANDS = [
   { cmd: '/telegram', desc: 'How to setup a Telegram Bot for alerts' }
 ];
 
-export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: ChatInputProps) => {
+export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendingFile, onFileConsumed }: ChatInputProps) => {
   const [input, setInput] = useState('');
   const [showCommands, setShowCommands] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [filteredCommands, setFilteredCommands] = useState(SLASH_COMMANDS);
-  
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; content: string }[]>([]);
   const [isAnalyzingPlanLocal, setIsAnalyzingPlanLocal] = useState(false);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
+  const [isComparingPlans, setIsComparingPlans] = useState(false);
+  const [showProviderDropdown, setShowProviderDropdown] = useState(false);
+  const [messageQueue, setMessageQueue] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const providerScrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const { addMessage, chats, updateChat } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
   const { getKeyForProvider, getModelForProvider, getAuthModeForProvider } = useAPIKeyStore();
-  const { installedModels: ollamaInstalled, selectedModel: ollamaSelectedModel, baseUrl: ollamaBaseUrl } = useOllamaStore();
+  const { selectedModel: ollamaSelectedModel, baseUrl: ollamaBaseUrl } = useOllamaStore();
 
   const generateSQLMutation = useGenerateSQL();
 
-  const updateScrollArrows = () => {
-    const el = providerScrollRef.current;
-    if (!el) return;
-    setCanScrollLeft(el.scrollLeft > 0);
-    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
-  };
-
   useEffect(() => {
-    const el = providerScrollRef.current;
-    if (!el) return;
-    updateScrollArrows();
-    el.addEventListener('scroll', updateScrollArrows);
-    const ro = new ResizeObserver(updateScrollArrows);
-    ro.observe(el);
-    return () => { el.removeEventListener('scroll', updateScrollArrows); ro.disconnect(); };
-  }, []);
+    if (!showProviderDropdown) return;
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowProviderDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showProviderDropdown]);
+
+
+  // Consume pending file from parent (drag & drop from ChatWindow)
+  useEffect(() => {
+    if (pendingFile) {
+      setAttachedFiles([pendingFile]);
+      onFileConsumed?.();
+    }
+  }, [pendingFile]);
 
   // Auto-resize textarea based on content
   useEffect(() => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = '42px'; // Reset to min height
+      textareaRef.current.style.height = '42px';
       const scrollHeight = textareaRef.current.scrollHeight;
       textareaRef.current.style.height = Math.min(scrollHeight, 200) + 'px';
     }
   }, [input]);
 
+  const handleBrowseFile = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).slice(0, 2);
+    if (files.length === 0) return;
+    const readers = files.map(
+      (file) =>
+        new Promise<{ name: string; content: string }>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve({ name: file.name, content: ev.target?.result as string });
+          reader.readAsText(file);
+        })
+    );
+    Promise.all(readers).then((results) => setAttachedFiles(results));
+    e.target.value = '';
+  };
+
   // Combine local and prop analyzing states
   const isAnalyzingPlan = isAnalyzingPlanProp || isAnalyzingPlanLocal;
 
-  const handleExecutionPlanPaste = async (xmlContent: string) => {
+  const handleExecutionPlanPaste = async (xmlContent: string, userQuestion?: string, fileName?: string) => {
     setIsAnalyzingPlanLocal(true);
 
     try {
@@ -326,11 +423,16 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
       // Get AI provider from chat or fall back to default
       const aiProvider = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
 
-      // Add user message showing they pasted XML
+      // Show user message — prefer what they typed, then filename, then generic
+      // Store the XML in hiddenContent so follow-up questions have full context
+      const userMsgContent = userQuestion
+        || (fileName ? `Analyze execution plan: ${fileName}` : 'Analyze execution plan');
       addMessage(chatId, {
         id: uuidv4(),
         role: 'user',
-        content: 'Pasted execution plan XML for analysis',
+        content: userMsgContent,
+        hiddenContent: xmlContent,
+        attachmentName: fileName,
         timestamp: new Date(),
       });
 
@@ -352,19 +454,22 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
 
       // Get settings for analysis
       const apiKey = getKeyForProvider(aiProvider);
-      const aiModel = getModelForProvider(aiProvider);
+      const aiModel = aiProvider === 'ollama' ? (ollamaSelectedModel || undefined) : getModelForProvider(aiProvider);
       const planAuthMode = getAuthModeForProvider(aiProvider);
 
-      // All providers use BYOK mode
-      const mode = 'byok';
+      // Get current connection info for context matching
+      const connectedDatabase = currentChat.connectionId
+        ? getConnection(currentChat.connectionId)?.database
+        : undefined;
+      const connectedDbType = currentChat.connectionId
+        ? getConnection(currentChat.connectionId)?.databaseType
+        : undefined;
 
       const analysis = await analyzeExecutionPlan(
         xmlContent,
-        mode,
         aiProvider,
-        aiModel,
-        apiKey,
-        undefined, // token (not used in BYOK mode)
+        aiModel || undefined,
+        apiKey || undefined,
         aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
           ? {
             access_key: bedrockAccessKey,
@@ -372,13 +477,16 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
             region: bedrockRegion,
           }
           : undefined,
-        planAuthMode
+        planAuthMode,
+        aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
+        connectedDatabase || undefined,
+        connectedDbType || undefined,
       );
 
-      // Remove analyzing message
-      const chatAfterAnalysis = chats.find((c) => c.id === chatId);
-      if (chatAfterAnalysis) {
-        const updatedMessages = chatAfterAnalysis.messages.filter(m => m.id !== analyzingMessageId);
+      // Remove analyzing message — use getState() to get fresh store (not stale closure)
+      const freshChat = useChatStore.getState().chats.find((c) => c.id === chatId);
+      if (freshChat) {
+        const updatedMessages = freshChat.messages.filter(m => m.id !== analyzingMessageId);
         updateChat(chatId, { messages: updatedMessages });
       }
 
@@ -413,6 +521,79 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp }: Chat
       });
     } finally {
       setIsAnalyzingPlanLocal(false);
+    }
+  };
+
+  const handleCompareExecutionPlans = async (
+    fileA: { name: string; content: string },
+    fileB: { name: string; content: string },
+    userQuestion?: string,
+  ) => {
+    setIsAnalyzingPlanLocal(true);
+    setIsComparingPlans(true);
+    try {
+      const currentChat = chats.find((c) => c.id === chatId);
+      if (!currentChat) { showToast.error('Chat not found'); return; }
+
+      const aiProvider = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
+      const apiKey = getKeyForProvider(aiProvider);
+      const aiModel = aiProvider === 'ollama' ? (ollamaSelectedModel || undefined) : getModelForProvider(aiProvider);
+      const planAuthMode = getAuthModeForProvider(aiProvider);
+
+      addMessage(chatId, {
+        id: uuidv4(),
+        role: 'user',
+        content: userQuestion || `Compare execution plans: ${fileA.name} vs ${fileB.name}`,
+        attachmentName: `${fileA.name} vs ${fileB.name}`,
+        timestamp: new Date(),
+      });
+      setInput('');
+      setShowCommands(false);
+      if (textareaRef.current) textareaRef.current.style.height = '42px';
+
+      const comparingMsgId = uuidv4();
+      addMessage(chatId, {
+        id: comparingMsgId,
+        role: 'assistant',
+        content: 'Comparing execution plans...',
+        timestamp: new Date(),
+      });
+
+      const analysis = await analyzeExecutionPlan(
+        fileA.content,
+        aiProvider,
+        aiModel || undefined,
+        apiKey || undefined,
+        aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
+          ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
+          : undefined,
+        planAuthMode,
+        aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
+        undefined,
+        undefined,
+        fileB.content,
+      );
+
+      const freshChat = useChatStore.getState().chats.find((c) => c.id === chatId);
+      if (freshChat) {
+        updateChat(chatId, { messages: freshChat.messages.filter(m => m.id !== comparingMsgId) });
+      }
+
+      addMessage(chatId, {
+        id: uuidv4(),
+        role: 'assistant',
+        content: analysis.success
+          ? `# Execution Plan Comparison\n\n${analysis.ai_insights || createAnalysisMessage(analysis)}`
+          : `Comparison failed: ${analysis.error || 'Unknown error'}`,
+        timestamp: new Date(),
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      showToast.error(`Comparison failed: ${errorMessage}`);
+      addMessage(chatId, { id: uuidv4(), role: 'assistant', content: `Error: ${errorMessage}`, timestamp: new Date() });
+    } finally {
+      setIsAnalyzingPlanLocal(false);
+      setIsComparingPlans(false);
     }
   };
 
@@ -567,16 +748,17 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     });
   };
 
-  const handleSend = async () => {
-    if (!input.trim()) return;
-
-    // Check if input is execution plan XML
-    if (isExecutionPlanXML(input)) {
-      await handleExecutionPlanPaste(input);
+  const sendMessage = async (text: string) => {
+    // Check if message contains execution plan XML
+    if (isExecutionPlanXML(text)) {
+      const xmlStart = text.indexOf('<?xml');
+      const userQuestion = xmlStart > 0 ? text.slice(0, xmlStart).trim() : undefined;
+      const xmlContent = xmlStart > 0 ? text.slice(xmlStart) : text;
+      await handleExecutionPlanPaste(xmlContent, userQuestion);
       return;
     }
 
-    const trimmedInput = input.trim();
+    const trimmedInput = text.trim();
     
     // Check if it's a slash command
     if (trimmedInput.startsWith('/')) {
@@ -606,9 +788,6 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     // Get AI provider from chat or fall back to default
     const aiProvider = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
 
-    // All providers use BYOK mode
-    const mode = 'byok';
-
     // Check credentials - need API key or access token (except for bedrock/ollama)
     let apiKey: string | undefined;
     const authMode = getAuthModeForProvider(aiProvider);
@@ -628,23 +807,14 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
       }
     }
 
-    // Store the input value before clearing
-    const userInput = input;
-
     // Add user message
     const userMessage = {
       id: uuidv4(),
       role: 'user' as const,
-      content: userInput,
+      content: trimmedInput,
       timestamp: new Date(),
     };
     addMessage(chatId, userMessage);
-    setInput('');
-    setShowCommands(false);
-    // Reset textarea height
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '42px';
-    }
 
     try {
       // Build connection string from connection details
@@ -655,6 +825,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
 
       // Get conversation history (last 10 messages for context)
       // Filter out error/system messages so they don't confuse small AI models
+      // Append hiddenContent (e.g. execution plan XML) so follow-up questions have full context
       const conversationHistory = currentChat.messages
         .filter(msg => !(msg.role === 'assistant' && (
           msg.content.startsWith('Error:') ||
@@ -664,12 +835,14 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
         .slice(-10)
         .map(msg => ({
           role: msg.role,
-          content: msg.content
+          content: msg.hiddenContent
+            ? `${msg.content}\n\n${msg.hiddenContent}`
+            : msg.content,
         }));
 
       // Generate SQL using BYOK mode
       const sqlResult = await generateSQLMutation.mutateAsync({
-        question: userInput,
+        question: trimmedInput,
         connection_string: connectionString,
         database_type: connection.databaseType,
         ai_provider: aiProvider,
@@ -684,7 +857,6 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
           }
           : undefined,
         ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
-        mode: mode,
         conversation_history: conversationHistory,
       });
 
@@ -707,7 +879,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
       if (currentChat.messages.length === 0) {
         try {
           const titleResult = await apiClient.generateChatTitle({
-            question: userInput,
+            question: trimmedInput,
             ai_provider: aiProvider,
             ai_model: aiModel,
             api_key: apiKey,
@@ -720,7 +892,6 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
               }
               : undefined,
             ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
-            mode: mode,
           });
 
           if (titleResult.success && titleResult.title) {
@@ -799,6 +970,47 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
 
   const isLoading = generateSQLMutation.isPending || isAnalyzingPlan;
 
+  const handleSend = () => {
+    if (!input.trim() && attachedFiles.length === 0) return;
+    const typedText = input.trim();
+    const files = attachedFiles;
+    setInput('');
+    setAttachedFiles([]);
+    setShowCommands(false);
+    if (textareaRef.current) textareaRef.current.style.height = '42px';
+
+    if (files.length > 0) {
+      if (isLoading) {
+        showToast.warning('Please wait for the current request to finish before attaching a file');
+        setAttachedFiles(files);
+        if (typedText) setInput(typedText);
+        return;
+      }
+      if (files.length === 2) {
+        handleCompareExecutionPlans(files[0], files[1], typedText || undefined);
+      } else {
+        handleExecutionPlanPaste(files[0].content, typedText || undefined, files[0].name);
+      }
+      return;
+    }
+
+    // Plain text message
+    if (!typedText) return;
+    if (isLoading) {
+      setMessageQueue(prev => [...prev, typedText]);
+      return;
+    }
+    sendMessage(typedText);
+  };
+
+  useEffect(() => {
+    if (!isLoading && messageQueue.length > 0) {
+      const [next, ...rest] = messageQueue;
+      setMessageQueue(rest);
+      setTimeout(() => sendMessage(next), 50);
+    }
+  }, [isLoading]);
+
   // Get current chat to access its AI provider
   const currentChat = chats.find((c) => c.id === chatId);
   const currentProvider = (currentChat?.aiProvider || defaultAIProvider || 'openai') as AIProvider;
@@ -809,81 +1021,43 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     }
   };
 
+  const PROVIDER_LIST: { id: AIProvider; name: string; icon: React.ReactNode; }[] = [
+    { id: 'claude', name: 'Claude', icon: <ClaudeLogo /> },
+    { id: 'openai', name: 'OpenAI', icon: <OpenAILogo /> },
+    { id: 'gemini', name: 'Gemini', icon: <GeminiLogo /> },
+    { id: 'bedrock', name: 'Bedrock', icon: <BedrockLogo /> },
+    { id: 'openrouter', name: 'OpenRouter', icon: (
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    )},
+    { id: 'ollama', name: 'Ollama', icon: <OllamaLogo /> },
+  ];
+
+  const currentProviderInfo = PROVIDER_LIST.find(p => p.id === currentProvider);
+  const currentModel = currentProvider === 'ollama'
+    ? ollamaSelectedModel
+    : getModelForProvider(currentProvider);
+  const modelLabel = currentModel
+    ? currentModel.length > 22 ? currentModel.slice(0, 22) + '…' : currentModel
+    : null;
+
   return (
     <InputContainer>
-      {generateSQLMutation.isPending && <LoadingIndicator>Generating SQL...</LoadingIndicator>}
-      {isAnalyzingPlan && <LoadingIndicator>Analyzing execution plan...</LoadingIndicator>}
+      {(generateSQLMutation.isPending || isAnalyzingPlan) && (
+        <LoadingBar>
+          {isAnalyzingPlan
+            ? (isComparingPlans ? 'Comparing execution plans…' : 'Analyzing execution plan…')
+            : 'Generating SQL…'}
+        </LoadingBar>
+      )}
 
-      <TopBar>
-        <ProviderSelectorWrapper>
-          <ScrollArrow $visible={canScrollLeft} onClick={() => { providerScrollRef.current?.scrollBy({ left: -120, behavior: 'smooth' }); }}>‹</ScrollArrow>
-          <ProviderSelectorCompact ref={providerScrollRef}>
-          <ProviderLabel>AI</ProviderLabel>
-          <ProviderButton
-            $active={currentProvider === 'claude'}
-            $provider="claude"
-            onClick={() => handleProviderChange('claude')}
-          >
-            <ProviderIconWrapper><ClaudeLogo /></ProviderIconWrapper>
-            Claude
-          </ProviderButton>
-          <ProviderButton
-            $active={currentProvider === 'openai'}
-            $provider="openai"
-            onClick={() => handleProviderChange('openai')}
-          >
-            <ProviderIconWrapper><OpenAILogo /></ProviderIconWrapper>
-            OpenAI
-          </ProviderButton>
-          <ProviderButton
-            $active={currentProvider === 'gemini'}
-            $provider="gemini"
-            onClick={() => handleProviderChange('gemini')}
-          >
-            <ProviderIconWrapper><GeminiLogo /></ProviderIconWrapper>
-            Gemini
-          </ProviderButton>
-          <ProviderButton
-            $active={currentProvider === 'bedrock'}
-            $provider="bedrock"
-            onClick={() => handleProviderChange('bedrock')}
-          >
-            <ProviderIconWrapper><BedrockLogo /></ProviderIconWrapper>
-            Bedrock
-          </ProviderButton>
-          <ProviderButton
-            $active={currentProvider === 'openrouter'}
-            $provider="openrouter"
-            onClick={() => handleProviderChange('openrouter')}
-          >
-            <ProviderIconWrapper>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </ProviderIconWrapper>
-            OpenRouter
-          </ProviderButton>
-          {ollamaInstalled.length > 0 && (
-            <ProviderButton
-              $active={currentProvider === 'ollama'}
-              $provider="ollama"
-              onClick={() => handleProviderChange('ollama')}
-            >
-              <ProviderIconWrapper><OllamaLogo /></ProviderIconWrapper>
-              Ollama
-            </ProviderButton>
-          )}
-          </ProviderSelectorCompact>
-          <ScrollArrow $visible={canScrollRight} onClick={() => { providerScrollRef.current?.scrollBy({ left: 120, behavior: 'smooth' }); }}>›</ScrollArrow>
-        </ProviderSelectorWrapper>
-      </TopBar>
-
-      <InputWrapper>
+      <ChatBox>
         {showCommands && (
           <CommandMenuContainer>
             {filteredCommands.map((cmd, idx) => (
-              <CommandItem 
-                key={cmd.cmd} 
+              <CommandItem
+                key={cmd.cmd}
                 $selected={idx === selectedIndex}
                 onClick={() => handleSlashCommand(cmd.cmd)}
                 onMouseEnter={() => setSelectedIndex(idx)}
@@ -894,19 +1068,84 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
             ))}
           </CommandMenuContainer>
         )}
-        <Input
+
+        {attachedFiles.map((f, i) => (
+          <AttachmentChip key={i}>
+            📎 {f.name}
+            <AttachmentRemove onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))}>×</AttachmentRemove>
+          </AttachmentChip>
+        ))}
+
+        <StyledTextarea
           ref={textareaRef}
           value={input}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          placeholder="Type your question... (Shift+Enter for new line)"
-          disabled={isLoading}
+          placeholder={attachedFiles.length === 2 ? 'Compare plans — add a note (optional)…' : attachedFiles.length === 1 ? 'Add a message (optional)…' : 'Ask anything… (/ for commands, Shift+Enter for new line)'}
           rows={1}
         />
-        <SendButton onClick={handleSend} disabled={!input.trim() || isLoading}>
-          {isLoading ? <InlineLoading /> : 'Send'}
-        </SendButton>
-      </InputWrapper>
+
+        <BottomBar>
+          <LeftActions ref={dropdownRef}>
+            <AttachBtn onClick={handleBrowseFile} title="Attach .sqlplan file">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+              </svg>
+            </AttachBtn>
+
+            <ProviderPill onClick={() => setShowProviderDropdown(prev => !prev)}>
+              <ProviderIconWrapper>{currentProviderInfo?.icon}</ProviderIconWrapper>
+              {currentProviderInfo?.name}
+              {modelLabel && <PillModel> · {modelLabel}</PillModel>}
+              <PillChevron>▾</PillChevron>
+            </ProviderPill>
+
+            {showProviderDropdown && (
+              <ProviderDropdown>
+                {PROVIDER_LIST.map(p => {
+                  const model = p.id === 'ollama'
+                    ? ollamaSelectedModel
+                    : getModelForProvider(p.id);
+                  return (
+                    <ProviderOption
+                      key={p.id}
+                      $active={currentProvider === p.id}
+                      onClick={() => { handleProviderChange(p.id); setShowProviderDropdown(false); }}
+                    >
+                      <ProviderIconWrapper>{p.icon}</ProviderIconWrapper>
+                      <ProviderOptionLabel>
+                        <ProviderOptionName>{p.name}</ProviderOptionName>
+                        {model && <ProviderOptionModel>{model}</ProviderOptionModel>}
+                      </ProviderOptionLabel>
+                    </ProviderOption>
+                  );
+                })}
+              </ProviderDropdown>
+            )}
+          </LeftActions>
+
+          <RightActions>
+            <SendBtn onClick={handleSend} disabled={!input.trim() && attachedFiles.length === 0}>
+              {isLoading ? <InlineLoading /> : messageQueue.length > 0 ? (
+                <span style={{ fontSize: 10, fontWeight: 700 }}>+{messageQueue.length}</span>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+            </SendBtn>
+          </RightActions>
+        </BottomBar>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".sqlplan,.xml"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFileSelected}
+        />
+      </ChatBox>
     </InputContainer>
   );
 };

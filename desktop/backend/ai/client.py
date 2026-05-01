@@ -162,16 +162,33 @@ class AIClient:
 
     def _create_prompt(self, question: str, schema: str, database_type: str, conversation_history: List[Dict[str, str]] = None) -> str:
         """Create prompt for AI with conversation history"""
-        # Build conversation context if history exists
-        # Trim long assistant messages (analysis walls of text confuse small models)
         context = ""
+        has_execution_plan_in_history = False
+        execution_plan_count = 0
+
         if conversation_history and len(conversation_history) > 0:
             context = "\n\nPrevious conversation:\n"
-            for msg in conversation_history[-6:]:  # last 3 pairs max
+            for msg in conversation_history[-8:]:  # last 4 pairs
                 role = "User" if msg['role'] == 'user' else "Assistant"
                 content = msg['content']
-                if role == "Assistant" and len(content) > 300:
-                    content = content[:300] + "... [truncated]"
+
+                # Detect execution plan XML in message
+                if '<?xml' in content and ('ShowPlanXML' in content or 'showplan' in content.lower()):
+                    has_execution_plan_in_history = True
+                    execution_plan_count += 1
+                    xml_start = content.find('<?xml')
+                    user_question = content[:xml_start].strip()
+                    xml_size_kb = (len(content) - xml_start) // 1024
+                    # Include a sample so the AI recognises the plan
+                    xml_sample = content[xml_start:xml_start + 600]
+                    plan_label = f"Plan {execution_plan_count}" if execution_plan_count > 1 else "Execution plan"
+                    if user_question:
+                        content = f"{user_question}\n[{plan_label} XML — {xml_size_kb} KB attached]\n{xml_sample}…"
+                    else:
+                        content = f"[{plan_label} XML — {xml_size_kb} KB attached]\n{xml_sample}…"
+                elif role == "Assistant" and len(content) > 1500:
+                    content = content[:1500] + "… [truncated]"
+
                 context += f"{role}: {content}\n"
             context += "\n"
 
@@ -186,22 +203,85 @@ class AIClient:
             'Table:' not in schema
         )
 
-        return f"""You are a SQL query generator for a {database_type} database.
+        execution_plan_rule = ""
+        if has_execution_plan_in_history:
+            plan_count_note = f"({execution_plan_count} plan{'s' if execution_plan_count > 1 else ''} detected in conversation)"
+            execution_plan_rule = f"""
+RULE 2 — EXECUTION PLAN FOLLOW-UP (active — {plan_count_note}):
+The conversation above contains {execution_plan_count} SQL Server execution plan{'s' if execution_plan_count > 1 else ''}.
+Any follow-up question from the user refers to those plans.
 
-##### TOP PRIORITY RULE — READ FIRST #####
+A) SINGLE PLAN follow-up (e.g. "what should I fix?", "explain more", "can you fix it?"):
+- Continue the analysis: give specific, actionable recommendations
+- Reference actual operators, tables, and costs from the plan
+- Do NOT generate unrelated SQL
+
+B) PLAN COMPARISON (user shares a second plan, or asks "compare", "which is faster", "before/after"):
+- Identify Plan A (first shared) and Plan B (second shared)
+- Compare side by side:
+    * Total cost: Plan A vs Plan B — state the % difference
+    * Operation count: which plan has fewer operations
+    * Key differences: new indexes used, join strategy changes, scan→seek upgrades
+    * Missing indexes: were they resolved in Plan B?
+    * Warnings: did they disappear?
+- Give a clear verdict: which plan is better and why
+- If the improvement came from a specific change (e.g. an index), name it explicitly
+- Format as a structured comparison, not a wall of text
+
+- Do NOT ask "which query?" — you have both plans in context
+- Do NOT switch topics unless the user explicitly starts a new question about the database
+"""
+
+        # DB-specific syntax helpers (computed once, used in the prompt below)
+        is_mssql = database_type.lower() in ['sqlserver', 'mssql']
+        if is_mssql:
+            db_row_limit_example  = f"SELECT TOP 100 * FROM {example_table};"
+            db_limit_rule         = "Use TOP N: SELECT TOP 100 * FROM table_name. NEVER use LIMIT — SQL Server does not support it."
+            db_date_now           = "GETDATE() or SYSDATETIME()"
+            db_explain            = "SET STATISTICS IO, TIME ON;  (run before the query to see I/O and CPU cost)"
+            db_pagination         = "ORDER BY col OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"
+            db_string_concat      = "'+' operator or CONCAT()"
+            db_isnull             = "ISNULL(col, default) or COALESCE(col, default)"
+        else:
+            db_row_limit_example  = f"SELECT * FROM {example_table} LIMIT 100;"
+            db_limit_rule         = f"Use LIMIT N: SELECT * FROM table_name LIMIT 100. NEVER use TOP — {database_type} does not support it."
+            db_date_now           = "NOW() or CURRENT_TIMESTAMP"
+            db_explain            = "EXPLAIN ANALYZE SELECT ...  (shows actual execution stats)"
+            db_pagination         = "LIMIT 100 OFFSET 0"
+            db_string_concat      = "CONCAT() or || operator"
+            db_isnull             = "COALESCE(col, default) or IFNULL(col, default)"
+
+        return f"""You are an intelligent database assistant for a {database_type} database.
+You help with SQL queries, database analysis, execution plans, agent automation, and general conversation.
+
+##### LANGUAGE RULE (highest priority of all) #####
+Detect the language of the user's message and respond in that same language.
+If the user writes in Hebrew — respond in Hebrew. If in Spanish — respond in Spanish. Etc.
+SQL code blocks must always remain in English (SQL is a universal language).
+Only the explanations and conversational text should be in the user's language.
+#################################################
+
+##### TOP PRIORITY RULES — READ FIRST #####
+
+RULE 0 — CONVERSATIONAL MESSAGES (highest priority):
+If the user is greeting you, chatting, or asking a non-database question
+(e.g. "hello", "hey", "how are you", "thanks", "what can you do"),
+respond in plain conversational text. Do NOT generate SQL. Do NOT generate JSON.
+
+RULE 1 — DATABASE QUESTIONS:
 If the user asks for data, rows, records, or results — respond with SQL immediately.
 If the user asks to CREATE / ALTER / DROP / INSERT / UPDATE / DELETE — respond with SQL immediately.
 NEVER respond with a procedure-request or agent-request for DDL/DML operations. Just write the SQL.
 Examples:
-  "give me all {example_table}"        → SELECT * FROM {example_table} LIMIT 100;
+  "give me all {example_table}"        → {db_row_limit_example}
   "create a table called orders"       → CREATE TABLE orders (...);
   "add a column to {example_table}"    → ALTER TABLE {example_table} ADD COLUMN ...;
   "delete old rows"                    → DELETE FROM ... WHERE ...;
-This rule overrides everything else. When in doubt — write SQL, not JSON.
+{execution_plan_rule}
 ##########################################
 
 Current Server Date and Time: {current_time}
-Current database: {database_type}
+Database engine: {database_type}
 
 === CURRENT DATABASE SCHEMA (AUTHORITATIVE — use ONLY these tables and columns) ===
 {schema}
@@ -252,10 +332,9 @@ SELECT * FROM table_name;
 
    If the user asks for DATA (rows, records, results) — even in casual language — ALWAYS generate SQL immediately. Do NOT ask questions.
    Examples that must generate SQL right away (use actual table names from the schema above):
-     * "give me all {example_table}" → SELECT * FROM {example_table} LIMIT 100
-     * "show me {example_table}" → SELECT * FROM {example_table} LIMIT 100
-     * "list all {example_table}" → SELECT * FROM {example_table} LIMIT 100
-     * "get the last 10 from {example_table}" → SELECT * FROM {example_table} LIMIT 10
+     * "give me all {example_table}" → {db_row_limit_example}
+     * "show me {example_table}" → {db_row_limit_example}
+     * "list all {example_table}" → {db_row_limit_example}
      * "how many rows in X" → SELECT COUNT(*) FROM X
    These are DATA requests. Always respond with a SQL query. Never ask for confirmation.
 
@@ -292,14 +371,6 @@ SELECT * FROM table_name;
    - Use the appropriate syntax for the current database type
    - Example for SQL Server:
 
-```sql
-SELECT
-    DB_NAME() AS DatabaseName,
-    SUSER_SNAME(owner_sid) AS DatabaseOwner,
-    create_date AS CreatedDate,
-    collation_name AS Collation
-FROM sys.databases
-WHERE name = DB_NAME();
 ```sql
 SELECT
     DB_NAME() AS DatabaseName,
@@ -365,19 +436,37 @@ WHERE name = DB_NAME();
 ```
 
 9. SYNTAX RULES FOR {database_type.upper()} (CURRENT DATABASE — MANDATORY):
-   - NEVER use TOP syntax. NEVER write "SELECT TOP N".
-   - ALWAYS use: SELECT * FROM table LIMIT 100
+   - Row limiting: {db_limit_rule}
+   - Pagination: {db_pagination}
+   - Current date/time: {db_date_now}
+   - String concatenation: {db_string_concat}
+   - Null fallback: {db_isnull}
    - Put ONLY the SQL query inside the ```sql``` code block
    - Put your explanation OUTSIDE the code block
    - Make the SQL clean and properly formatted
    - DO NOT add comments inside the SQL code block (we'll add them automatically)
    - EXCEPTION: Database insights scripts SHOULD include comments for interpretation guidance
 
+10. WHEN THE USER SAYS A QUERY IS SLOW OR ASKS HOW TO OPTIMIZE:
+   - First suggest running: {db_explain}
+   - Then explain what to look for (sequential scans, missing indexes, high cost nodes)
+   - If the user shares the output, analyze it and give specific fixes
+   - Do NOT just say "add an index" — explain which column and why
+
+11. WHEN THE USER ASKS "WHAT TABLES DO I HAVE?" OR "WHAT'S IN MY DATABASE?":
+   - Answer directly from the CURRENT DATABASE SCHEMA provided above — do NOT generate a SQL query for this
+   - List the tables and a one-line description of what each likely contains (based on column names)
+   - If the schema is empty, say so and suggest reconnecting or checking permissions
+
+12. SELECT * WARNING:
+   - When generating SELECT * on a table that has many columns or the user didn't specify a limit, always add the appropriate row limit ({db_row_limit_example})
+   - If the user explicitly asks for all rows (e.g. "give me everything"), still add the limit and mention they can remove it
+
 Example response format for {database_type} (follow this exact syntax):
 Here's a query to get {example_table}:
 
 ```sql
-SELECT * FROM {example_table} LIMIT 100;
+{db_row_limit_example}
 ```
 
 This will retrieve up to 100 records from the {example_table} table.
@@ -529,6 +618,7 @@ def get_ai_client(provider: str, api_key: str = None, model: str = None, bedrock
         "gemini": AIProvider.GEMINI,
         "bedrock": AIProvider.BEDROCK,
         "ollama": AIProvider.OLLAMA,
+        "openrouter": AIProvider.OPENROUTER,
     }
 
     if provider_lower not in provider_map:
