@@ -42,12 +42,12 @@ SQLingo is a free desktop application that lets you write natural language quest
 
 ### Autonomous Agents
 - Schedule SQL monitors that run on a cron schedule
-- Agents can send results to Telegram or store locally
+- Agents store results locally (Telegram alerts — coming soon)
 - Full run history and log viewer
 
 ### Desktop Experience
 - Chat interface with persistent conversation history per connection
-- Slash commands: `/permission mssql`, `/permission postgres`, `/telegram`
+- Slash commands: `/permission mssql`, `/permission postgres`
 - Dark / Light mode
 - Floating always-on-top window mode
 - **Multilingual** — chat in any language, full RTL support (Hebrew, Arabic, etc.)
