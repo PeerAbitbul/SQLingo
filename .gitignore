@@ -92,6 +92,10 @@ desktop/backend/build/
 # AI assistant instructions (not for public repo)
 CLAUDE.md
 
+# Bundled backend executable (built locally via PyInstaller)
+desktop/frontend/resources/db-chat-backend
+desktop/frontend/resources/db-chat-backend.exe
+
 #folder
 scripts/
 

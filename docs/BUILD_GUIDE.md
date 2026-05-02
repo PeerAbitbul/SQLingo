@@ -1,17 +1,8 @@
 # SQLingo Desktop - Build Guide
 
-**Version:** 0.1.9
-**Status:** ✅ Successfully Built for macOS
-
 ---
 
-## 📦 Overview
-
-This guide covers building SQLingo Desktop application installers for macOS, Windows, and Linux using Electron Builder.
-
----
-
-## 🏗️ Build Architecture
+## Build Architecture
 
 ```
 Desktop Application (SQLingo)
@@ -22,67 +13,65 @@ Desktop Application (SQLingo)
 │
 └── Backend (Python + FastAPI)
     ├── Build: PyInstaller → Single executable
-    ├── Auto-start: Electron spawns backend on launch
-    └── Bundled: Included in app resources directory
+    ├── Place: desktop/frontend/resources/db-chat-backend
+    └── Auto-start: Electron spawns backend on launch
 ```
 
----
-
-## ⚙️ Prerequisites
-
-- **Node.js**: v18+
-- **npm**: v9+
-- **Python**: v3.11+
-- **electron-builder**: v26+
+**Important:** You must build the Python backend with PyInstaller BEFORE running `electron:build`. Otherwise the app will launch without a backend.
 
 ---
 
-## 🎨 Icon Setup
+## Prerequisites
 
-The icons are located in `desktop/frontend/public/` and `desktop/frontend/build/`.
-- **macOS**: `SQLingoICON.png`
-- **Windows/Linux**: Automatically generated from PNG.
+- Node.js 18+
+- Python 3.10+
+- Virtual environment set up (`desktop/backend/venv/`)
 
 ---
 
-## 🚀 Build Commands
+## Step 1 — Build the Python backend
 
 ```bash
-cd desktop/frontend
+cd desktop/backend
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install pyinstaller
+pyinstaller db-chat-backend.spec
+```
 
-# Build All Platforms
-npm run electron:build
+Output: `desktop/backend/dist/db-chat-backend`
 
-# macOS only
-npm run electron:build:mac
+---
 
-# Windows only
-npm run electron:build:win
+## Step 2 — Copy executable to frontend resources
 
-# Linux only
-npm run electron:build:linux
+```bash
+mkdir -p ../frontend/resources
+cp dist/db-chat-backend ../frontend/resources/db-chat-backend
+```
+
+Windows:
+```bash
+copy dist\db-chat-backend.exe ..\frontend\resources\db-chat-backend.exe
 ```
 
 ---
 
-## 📦 macOS Build Output
+## Step 3 — Build the Electron app
 
-```
-release/
-├── SQLingo-0.1.9-arm64.dmg         # Apple Silicon installer
-├── SQLingo-0.1.9-x64.dmg           # Intel Mac installer
+```bash
+cd ../frontend
+
+npm run electron:build:mac      # → release/SQLingo-x.x.x-arm64.dmg + x64.dmg
+npm run electron:build:win      # → release/SQLingo-x.x.x-x64.exe
+npm run electron:build:linux    # → release/SQLingo-x.x.x-x64.AppImage
 ```
 
 ---
 
-## 📝 Build Checklist (SQLingo)
+## Build Checklist
 
-- [ ] Update version in `package.json`
-- [ ] Test all features in dev mode (`npm run electron:dev`)
-- [ ] Verify `SQLingoICON.png` is correctly set in `electron/main.js`
-- [ ] Ensure backend `main.py` has no cloud references
-- [ ] Run `npm run build` to verify the React bundle
-
----
-
-**Distribute SQLingo as a standalone, private, and free tool.**
+- [ ] `venv` is set up and dependencies installed
+- [ ] PyInstaller build succeeded (`dist/db-chat-backend` exists)
+- [ ] Executable copied to `frontend/resources/`
+- [ ] Tested in dev mode first (`npm run electron:dev`)
+- [ ] Version bumped in `desktop/frontend/package.json`
