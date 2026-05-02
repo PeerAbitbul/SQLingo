@@ -1,6 +1,6 @@
 # SQLingo — Free AI-Powered Database Assistant
 
-> Talk to your databases in plain English. Runs 100% on your machine, uses your own AI keys.
+> Talk to your databases in any language. Runs 100% on your machine, uses your own AI keys.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -50,6 +50,7 @@ SQLingo is a free desktop application that lets you write natural language quest
 - Slash commands: `/permission mssql`, `/permission postgres`, `/telegram`
 - Dark / Light mode
 - Floating always-on-top window mode
+- **Multilingual** — chat in any language, full RTL support (Hebrew, Arabic, etc.)
 
 ---
 
