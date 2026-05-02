@@ -9,6 +9,26 @@
 
 ---
 
+## Screenshots
+
+| Chat & SQL Generation | Query Results |
+|---|---|
+| ![Chat](docs/screenshots/chat-query.png) | ![Results](docs/screenshots/query-results-table.png) |
+
+| Charts & Visualization | AI Provider Selection |
+|---|---|
+| ![Chart](docs/screenshots/query-results-chart.png) | ![Providers](docs/screenshots/ai-providers.png) |
+
+| Execution Plan Analysis | Plan Comparison |
+|---|---|
+| ![Analysis](docs/screenshots/execution-plan-analysis.png) | ![Compare](docs/screenshots/execution-plan-compare.png) |
+
+| Autonomous Agents | Ollama (Offline AI) | Settings |
+|---|---|---|
+| ![Agents](docs/screenshots/agents-dashboard.png) | ![Ollama](docs/screenshots/ollama-models.png) | ![Settings](docs/screenshots/settings.png) |
+
+---
+
 ## What is SQLingo?
 
 SQLingo is a free desktop application that lets you write natural language questions and get back working SQL — instantly. No cloud subscription, no usage limits, no data leaving your machine unless you choose it.
