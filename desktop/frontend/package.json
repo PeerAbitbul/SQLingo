@@ -18,6 +18,9 @@
     "electron:build:mac": "npm run build && electron-builder --mac",
     "electron:build:win": "npm run build && electron-builder --win",
     "electron:build:linux": "npm run build && electron-builder --linux",
+    "dist:mac": "bash ../../scripts/build-backend.sh && npm run electron:build:mac",
+    "dist:win": "bash ../../scripts/build-backend.sh && npm run electron:build:win",
+    "dist:linux": "bash ../../scripts/build-backend.sh && npm run electron:build:linux",
     "electron:publish": "npm run build && electron-builder --publish always",
     "electron:publish:mac": "npm run build && electron-builder --mac --publish always",
     "electron:publish:win": "npm run build && electron-builder --win --publish always"

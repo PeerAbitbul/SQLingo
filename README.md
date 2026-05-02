@@ -144,13 +144,17 @@ The Electron app starts the Python backend automatically.
 
 ## Building a distributable
 
+These commands build the Python backend with PyInstaller and then package the full Electron app in one step:
+
 ```bash
 cd desktop/frontend
 
-npm run electron:build:mac      # → .dmg
-npm run electron:build:win      # → .exe installer
-npm run electron:build:linux    # → .AppImage / .deb
+npm run dist:mac      # → release/SQLingo-x.x.x-arm64.dmg + x64.dmg
+npm run dist:win      # → release/SQLingo-x.x.x-x64.exe
+npm run dist:linux    # → release/SQLingo-x.x.x-x64.AppImage
 ```
+
+> **Note:** The first build takes a few minutes — PyInstaller bundles the entire Python runtime into a single executable.
 
 ---
 
