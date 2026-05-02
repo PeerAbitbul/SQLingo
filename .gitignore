@@ -89,6 +89,9 @@ desktop/backend/build/
 # Exception: Keep electron-builder assets (icons, etc.)
 !desktop/frontend/build/
 
+# AI assistant instructions (not for public repo)
+CLAUDE.md
+
 #folder
 scripts/
 
