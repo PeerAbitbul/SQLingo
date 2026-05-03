@@ -53,14 +53,41 @@ function loadSettings() {
   };
 }
 
+// Kill any process currently using the backend port (zombie cleanup)
+async function killPortProcess(port) {
+  const { execSync } = require('child_process');
+  try {
+    if (process.platform === 'win32') {
+      const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
+      const pids = new Set();
+      result.split('\n').forEach(line => {
+        const match = line.match(/\s+(\d+)\s*$/);
+        if (match && match[1] && match[1] !== '0') pids.add(match[1]);
+      });
+      for (const pid of pids) {
+        try {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+          logToFile(`Killed zombie process PID ${pid} on port ${port}`);
+        } catch {}
+      }
+    } else {
+      execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
+    }
+  } catch {
+    // No process on port or command not available — that's fine
+  }
+}
+
 // Start backend server
-function startBackend() {
+async function startBackend() {
   if (backendProcess) {
     logToFile('Backend already running');
     return;
   }
 
   logToFile('=== Starting backend server ===');
+  logToFile(`Clearing port ${DESKTOP_BACKEND_PORT} of any zombie processes...`);
+  await killPortProcess(DESKTOP_BACKEND_PORT);
   logToFile(`Mode: ${isDev ? 'Development' : 'Production'}`);
 
   try {
@@ -226,8 +253,17 @@ function setupAutoUpdater() {
 // Stop backend server
 function stopBackend() {
   if (backendProcess) {
-    console.log('Stopping backend...');
-    backendProcess.kill();
+    logToFile(`Stopping backend (PID: ${backendProcess.pid})...`);
+    try {
+      if (process.platform === 'win32' && backendProcess.pid) {
+        const { execSync } = require('child_process');
+        execSync(`taskkill /F /T /PID ${backendProcess.pid}`, { stdio: 'ignore' });
+      } else {
+        backendProcess.kill();
+      }
+    } catch (e) {
+      logToFile(`Warning: stopBackend error: ${e.message}`);
+    }
     backendProcess = null;
   }
 }
@@ -541,14 +577,14 @@ app.whenReady().then(() => {
     app.setAsDefaultProtocolClient('sqlingo');
   }
 
-  // Start backend server
-  startBackend();
+  // Start backend server (async: kills zombies on port first)
+  startBackend().then(() => {
+    // Setup auto-updater
+    setupAutoUpdater();
 
-  // Setup auto-updater
-  setupAutoUpdater();
-
-  // Wait for backend to be ready before creating window
-  waitForBackend().then(() => {
+    // Wait for backend to be ready before creating window
+    return waitForBackend();
+  }).then(() => {
     createWindow();
   }).catch((error) => {
     logToFile(`Failed to connect to backend: ${error.message}`);
