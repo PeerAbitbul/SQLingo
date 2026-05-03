@@ -241,16 +241,25 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
 
   const handleViewLogs = async () => {
     if (!window.electron?.readLogFile) return;
-    const result = await window.electron.readLogFile();
-    setLogPath(result.path || '');
-    setLogContent(result.content || '(log file is empty or not found)');
+    try {
+      const result = await window.electron.readLogFile();
+      setLogPath(result.path || '');
+      setLogContent(result.content || '(log file is empty or not found)');
+    } catch {
+      setLogContent('Could not read log file (restart the app to enable diagnostics)');
+    }
   };
 
   const handleCheckBackend = async () => {
     if (!window.electron?.getBackendStatus) return;
-    const status = await window.electron.getBackendStatus();
-    setBackendRunning(status.running);
-    setLogPath(status.logPath || '');
+    try {
+      const status = await window.electron.getBackendStatus();
+      setBackendRunning(status.running);
+      setLogPath(status.logPath || '');
+    } catch {
+      setBackendRunning(null);
+      setLogContent('Diagnostics not available — restart the app and try again');
+    }
   };
 
   // Apply "Always on Top" setting to Electron window
