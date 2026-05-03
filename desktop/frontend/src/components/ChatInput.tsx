@@ -107,6 +107,19 @@ const PillChevron = styled.span`
   margin-left: 1px;
 `;
 
+const SmallModelBadge = styled.span`
+  font-size: 10px;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: help;
+`;
+
 const ProviderDropdown = styled.div`
   position: absolute;
   bottom: calc(100% + 8px);
@@ -1042,6 +1055,15 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     ? currentModel.length > 22 ? currentModel.slice(0, 22) + '…' : currentModel
     : null;
 
+  const isSmallModel = (model: string | null): boolean => {
+    if (!model) return false;
+    const m = model.toLowerCase();
+    return m.includes('flash-lite') || m.includes('flash') || m.includes('mini') ||
+      m.includes('haiku') || m.includes('lite') || m.includes('nano') ||
+      m.includes('3.5') || m.includes('small') || m.includes('1b') ||
+      m.includes('3b') || m.includes('7b') || m.includes('8b');
+  };
+
   return (
     <InputContainer>
       {(generateSQLMutation.isPending || isAnalyzingPlan) && (
@@ -1097,6 +1119,11 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
               <ProviderIconWrapper>{currentProviderInfo?.icon}</ProviderIconWrapper>
               {currentProviderInfo?.name}
               {modelLabel && <PillModel> · {modelLabel}</PillModel>}
+              {isSmallModel(currentModel) && (
+                <SmallModelBadge title="Small models may struggle with complex queries, stored procedures, and multi-step requests. For best results, use a full-size model.">
+                  ⚠ lite
+                </SmallModelBadge>
+              )}
               <PillChevron>▾</PillChevron>
             </ProviderPill>
 
