@@ -178,8 +178,29 @@ const SecondaryButton = styled(Button)`
   border: 1px solid ${(props) => props.theme.colors.border};
 `;
 
-// Tier/Account styled components
+const LogBox = styled.pre`
+  background: ${(props) => props.theme.colors.background};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  border-radius: ${(props) => props.theme.borderRadius.sm};
+  padding: ${(props) => props.theme.spacing.sm};
+  font-size: 11px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: ${(props) => props.theme.colors.text};
+  margin-top: ${(props) => props.theme.spacing.sm};
+`;
 
+const StatusDot = styled.span<{ $running: boolean | null }>`
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background-color: ${(props) =>
+    props.$running === null ? '#94a3b8' : props.$running ? '#22c55e' : '#ef4444'};
+`;
 
 
 
@@ -214,6 +235,23 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
 
   const [localRetentionDays, setLocalRetentionDays] = useState(retentionDays.toString());
   const [localMaxMessages, setLocalMaxMessages] = useState(maxMessagesPerChat.toString());
+  const [logContent, setLogContent] = useState<string | null>(null);
+  const [logPath, setLogPath] = useState<string>('');
+  const [backendRunning, setBackendRunning] = useState<boolean | null>(null);
+
+  const handleViewLogs = async () => {
+    if (!window.electron?.readLogFile) return;
+    const result = await window.electron.readLogFile();
+    setLogPath(result.path || '');
+    setLogContent(result.content || '(log file is empty or not found)');
+  };
+
+  const handleCheckBackend = async () => {
+    if (!window.electron?.getBackendStatus) return;
+    const status = await window.electron.getBackendStatus();
+    setBackendRunning(status.running);
+    setLogPath(status.logPath || '');
+  };
 
   // Apply "Always on Top" setting to Electron window
   useEffect(() => {
@@ -392,6 +430,41 @@ export const Settings = ({ isOpen, onClose }: SettingsProps) => {
             <span style={{ fontSize: '14px', color: '#64748b' }}>0.1.0</span>
           </SettingRow>
         </Section>
+
+        {/* Diagnostics - always visible */}
+        {window.electron && (
+          <Section>
+            <SectionTitle>Diagnostics</SectionTitle>
+            <SettingRow>
+              <SettingLabel>
+                Backend Status
+                <SettingDescription>
+                  {backendRunning === null
+                    ? 'Click Check to verify'
+                    : backendRunning
+                    ? 'Running'
+                    : 'Not running — check log below'}
+                </SettingDescription>
+              </SettingLabel>
+              <SecondaryButton onClick={handleCheckBackend}>
+                <StatusDot $running={backendRunning} />
+                Check
+              </SecondaryButton>
+            </SettingRow>
+            <SettingRow>
+              <SettingLabel>
+                Backend Log
+                <SettingDescription>
+                  {logPath ? logPath : 'View startup and error log'}
+                </SettingDescription>
+              </SettingLabel>
+              <SecondaryButton onClick={handleViewLogs}>View Log</SecondaryButton>
+            </SettingRow>
+            {logContent !== null && (
+              <LogBox>{logContent}</LogBox>
+            )}
+          </Section>
+        )}
 
         {/* Development Tools - Only shown in dev mode */}
         {import.meta.env.DEV && (

@@ -72,7 +72,6 @@ a = Analysis(
         # AI providers
         'anthropic',
         'openai',
-        'google.generativeai',
         'boto3',
         'botocore',
 

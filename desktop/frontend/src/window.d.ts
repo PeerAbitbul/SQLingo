@@ -22,6 +22,9 @@ declare global {
       onUpdateAvailable: (callback: (data: { version: string }) => void) => void;
       onUpdateProgress: (callback: (data: { percent: number }) => void) => void;
       onUpdateDownloaded: (callback: (data: { version: string }) => void) => void;
+      // Diagnostics
+      readLogFile: () => Promise<{ success: boolean; content: string; path: string }>;
+      getBackendStatus: () => Promise<{ running: boolean; pid: number | null; port: number; logPath: string }>;
       platform: string;
       isElectron: boolean;
     };

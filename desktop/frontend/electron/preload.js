@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('update-downloaded', (event, data) => callback(data));
   },
 
+  // Diagnostics
+  readLogFile: () => ipcRenderer.invoke('read-log-file'),
+  getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
+
   // Platform info
   platform: process.platform,
   isElectron: true

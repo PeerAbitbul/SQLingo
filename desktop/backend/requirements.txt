@@ -21,7 +21,7 @@ pymssql>=2.2.11            # SQL Server
 # ===========================================
 anthropic>=0.7.8           # Claude
 openai>=1.6.1              # GPT-4
-google-generativeai>=0.3.0 # Gemini
+# Gemini uses direct REST API via httpx — no SDK needed
 boto3>=1.35.0              # AWS Bedrock
 
 # ===========================================

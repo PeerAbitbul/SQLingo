@@ -163,24 +163,36 @@ class APIClient {
         headers,
       });
     } catch (fetchError: any) {
-      // If connection refused, backend might have restarted on a different port
-      // Force re-read the port config and try one more time
-      if (fetchError.message?.includes('Failed to fetch') || fetchError.message?.includes('ECONNREFUSED')) {
+      const isNetworkError = fetchError.message?.includes('Failed to fetch') ||
+        fetchError.message?.includes('ECONNREFUSED') ||
+        fetchError.message?.includes('Network request failed');
+
+      if (isNetworkError) {
         console.warn('Connection failed, retrying with fresh port config...');
-        const freshBaseUrl = await this.getBaseUrl();
-        const freshUrl = `${freshBaseUrl}${endpoint}`;
-        response = await fetch(freshUrl, {
-          ...options,
-          headers,
-        });
+        try {
+          const freshBaseUrl = await this.getBaseUrl();
+          const freshUrl = `${freshBaseUrl}${endpoint}`;
+          response = await fetch(freshUrl, { ...options, headers });
+        } catch {
+          throw new Error(
+            'Backend is not responding. The background service may have failed to start. ' +
+            'Check the log file at: ~/.sqlingo/electron-main.log'
+          );
+        }
       } else {
         throw fetchError;
       }
     }
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(errorData.detail?.message || errorData.detail || errorData.message || `HTTP ${response.status}`);
+      let detail: string;
+      try {
+        const errorData = await response.json();
+        detail = errorData.detail?.message || errorData.detail || errorData.message || `HTTP ${response.status}`;
+      } catch {
+        detail = `HTTP ${response.status}: ${response.statusText || 'Unknown error'}`;
+      }
+      throw new Error(detail);
     }
 
     return response.json();

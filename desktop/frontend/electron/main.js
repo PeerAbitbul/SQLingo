@@ -97,10 +97,11 @@ function startBackend() {
       logToFile(`Resources path: ${resourcesPath}`);
 
       // Try multiple possible paths for the backend
+      const exeName = process.platform === 'win32' ? 'db-chat-backend.exe' : 'db-chat-backend';
       const possiblePaths = [
-        path.join(resourcesPath, 'app.asar.unpacked', 'resources', 'db-chat-backend'),
-        path.join(resourcesPath, 'app', 'resources', 'db-chat-backend'),
-        path.join(__dirname, '..', 'resources', 'db-chat-backend')
+        path.join(resourcesPath, 'app.asar.unpacked', 'resources', exeName),
+        path.join(resourcesPath, 'app', 'resources', exeName),
+        path.join(__dirname, '..', 'resources', exeName)
       ];
 
       logToFile('Checking possible backend paths:');
@@ -711,6 +712,33 @@ ipcMain.handle('install-update', () => {
 
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
+});
+
+ipcMain.handle('read-log-file', async () => {
+  try {
+    if (fs.existsSync(logFilePath)) {
+      const content = fs.readFileSync(logFilePath, 'utf8');
+      // Return last 200 lines
+      const lines = content.split('\n');
+      return {
+        success: true,
+        content: lines.slice(-200).join('\n'),
+        path: logFilePath,
+      };
+    }
+    return { success: false, content: '', path: logFilePath };
+  } catch (error) {
+    return { success: false, content: error.message, path: logFilePath };
+  }
+});
+
+ipcMain.handle('get-backend-status', () => {
+  return {
+    running: !!backendProcess,
+    pid: backendProcess?.pid || null,
+    port: DESKTOP_BACKEND_PORT,
+    logPath: logFilePath,
+  };
 });
 
 logToFile('=== Electron app started ===');
