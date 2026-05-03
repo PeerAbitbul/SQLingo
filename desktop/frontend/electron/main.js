@@ -732,9 +732,21 @@ ipcMain.handle('read-log-file', async () => {
   }
 });
 
-ipcMain.handle('get-backend-status', () => {
+ipcMain.handle('get-backend-status', async () => {
+  let httpAlive = false;
+  try {
+    const http = require('http');
+    await new Promise((resolve, reject) => {
+      const req = http.get(`http://127.0.0.1:${DESKTOP_BACKEND_PORT}/health`, (res) => {
+        httpAlive = res.statusCode === 200;
+        resolve();
+      });
+      req.on('error', reject);
+      req.setTimeout(1500, reject);
+    });
+  } catch {}
   return {
-    running: !!backendProcess,
+    running: !!backendProcess || httpAlive,
     pid: backendProcess?.pid || null,
     port: DESKTOP_BACKEND_PORT,
     logPath: logFilePath,
