@@ -2,6 +2,14 @@
 SQLingo - Local Backend
 FastAPI server that runs locally on user's machine
 """
+import sys
+import asyncio
+
+# Windows fix: ProactorEventLoop (default on Windows) causes "Invalid argument"
+# errors with httpx/SSL. SelectorEventLoop is required for compatibility.
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import uvicorn
 import socket
 import json
