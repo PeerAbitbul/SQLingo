@@ -6,11 +6,15 @@ Bundles FastAPI + all dependencies into a single executable
 
 import os
 import sys
+import certifi
 
 block_cipher = None
 
 # Collect all data files
 datas = []
+
+# Bundle certifi CA certificates so httpx/SSL works in the frozen exe on Windows
+datas.append((certifi.where(), 'certifi'))
 
 # Include .env if it exists (user may place it next to the executable)
 if os.path.exists('.env'):
