@@ -189,7 +189,7 @@ class APIClient {
       try {
         const errorData = await response.json();
         const message = errorData.detail?.message || errorData.detail || errorData.message || `HTTP ${response.status}`;
-        if (import.meta.env.DEV && errorData.traceback) {
+        if (errorData.traceback) {
           detail = `${message}\n\n--- traceback ---\n${errorData.traceback}`;
         } else {
           detail = message;
