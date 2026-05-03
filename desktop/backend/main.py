@@ -22,10 +22,12 @@ if getattr(sys, 'frozen', False):
 import uvicorn
 import socket
 import json
+import traceback
 import os
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from api.routes import router
 from api.ollama_routes import router as ollama_router
 from api.agent_routes import router as agent_router
@@ -110,6 +112,15 @@ app.add_middleware(
 app.include_router(router, prefix="/api")
 app.include_router(ollama_router, prefix="/api/ollama")
 app.include_router(agent_router, prefix="/api/agents")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    print(f"[ERROR] Unhandled exception on {request.url}:\n{tb}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "traceback": tb},
+    )
 
 @app.on_event("startup")
 async def startup_event():

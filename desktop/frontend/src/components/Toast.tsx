@@ -79,6 +79,20 @@ const Message = styled.div`
   word-wrap: break-word;
 `;
 
+const TracebackBox = styled.pre`
+  font-size: 10px;
+  line-height: 1.4;
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  width: 100%;
+`;
+
 const CloseButton = styled.button`
   background: none;
   border: none;
@@ -106,20 +120,33 @@ const getIcon = (type: ToastType): string => {
   }
 };
 
+const TRACEBACK_SEP = '\n\n--- traceback ---\n';
+
 export const Toast = ({ toast, onClose }: ToastProps) => {
+  const hasTraceback = toast.message.includes(TRACEBACK_SEP);
+  const [shortMsg, tracebackText] = hasTraceback
+    ? toast.message.split(TRACEBACK_SEP)
+    : [toast.message, null];
+
   useEffect(() => {
-    const duration = toast.duration || 5000;
+    if (hasTraceback) {
+      console.error('[SQLingo dev] Backend traceback:\n' + tracebackText);
+    }
+    const duration = hasTraceback ? 30000 : (toast.duration || 5000);
     const timer = setTimeout(() => {
       onClose(toast.id);
     }, duration);
 
     return () => clearTimeout(timer);
-  }, [toast.id, toast.duration, onClose]);
+  }, [toast.id, toast.duration, onClose, hasTraceback, tracebackText]);
 
   return (
-    <ToastContainer $type={toast.type}>
+    <ToastContainer $type={toast.type} style={hasTraceback ? { maxWidth: 560, alignItems: 'flex-start' } : undefined}>
       <IconWrapper>{getIcon(toast.type)}</IconWrapper>
-      <Message>{toast.message}</Message>
+      <div style={{ flex: 1 }}>
+        <Message>{shortMsg}</Message>
+        {tracebackText && <TracebackBox>{tracebackText}</TracebackBox>}
+      </div>
       <CloseButton onClick={() => onClose(toast.id)}>
         ✕
       </CloseButton>

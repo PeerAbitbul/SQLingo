@@ -188,7 +188,12 @@ class APIClient {
       let detail: string;
       try {
         const errorData = await response.json();
-        detail = errorData.detail?.message || errorData.detail || errorData.message || `HTTP ${response.status}`;
+        const message = errorData.detail?.message || errorData.detail || errorData.message || `HTTP ${response.status}`;
+        if (import.meta.env.DEV && errorData.traceback) {
+          detail = `${message}\n\n--- traceback ---\n${errorData.traceback}`;
+        } else {
+          detail = message;
+        }
       } catch {
         detail = `HTTP ${response.status}: ${response.statusText || 'Unknown error'}`;
       }
