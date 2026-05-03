@@ -132,7 +132,7 @@ const AIDisclaimer = styled.div`
 `;
 
 export const ChatWindow = () => {
-  const { chats, activeChat, updateChat, addMessage } = useChatStore();
+  const { chats, activeChat, updateChat, addMessage, setLastUsedConnectionId } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -435,8 +435,12 @@ export const ChatWindow = () => {
         isOpen={isConnectionManagerOpen}
         onClose={() => setIsConnectionManagerOpen(false)}
         onSelectConnection={(connectionId) => {
-          if (currentChat) {
-            updateChat(currentChat.id, { connectionId });
+          const { chats, activeChat: latestActiveChat } = useChatStore.getState();
+          const latestChat = chats.find((c) => c.id === latestActiveChat);
+          if (latestChat) {
+            updateChat(latestChat.id, { connectionId });
+          } else {
+            setLastUsedConnectionId(connectionId);
           }
           setIsConnectionManagerOpen(false);
         }}

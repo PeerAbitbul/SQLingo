@@ -493,19 +493,19 @@ async def execute_query(request: QueryExecuteRequest):
         # Different allowed commands per database type
         if request.database_type == 'sqlserver':
             # SQL Server doesn't support SHOW
-            allowed_starts = ['SELECT', 'EXEC sp_', 'EXECUTE sp_']
+            allowed_starts = ['SELECT', 'WITH', 'EXEC sp_', 'EXECUTE sp_']
         else:
             # MySQL and PostgreSQL support SHOW, DESCRIBE, etc.
-            allowed_starts = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN']
-        
+            allowed_starts = ['SELECT', 'WITH', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN']
+
         if not any(query_upper.startswith(cmd) for cmd in allowed_starts):
             raise HTTPException(
                 status_code=400,
                 detail=f"Only read-only queries are allowed for {request.database_type}"
             )
-        
+
         # Check for dangerous keywords as standalone SQL commands (not in column names)
-        if query_upper.startswith('SELECT'):
+        if query_upper.startswith('SELECT') or query_upper.startswith('WITH'):
             dangerous_keywords = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'TRUNCATE']
             # Use word boundaries to match only complete keywords, not parts of column names
             import re
