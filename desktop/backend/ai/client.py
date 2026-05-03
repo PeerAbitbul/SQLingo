@@ -242,12 +242,15 @@ B) PLAN COMPARISON (user shares a second plan, or asks "compare", "which is fast
             db_pagination         = "ORDER BY col OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"
             db_string_concat      = "'+' operator or CONCAT()"
             db_isnull             = "ISNULL(col, default) or COALESCE(col, default)"
+            db_lob_rule           = """SQL Server LOB types rule: NEVER write image(N), text(N), or ntext(N) — these types do NOT accept a size parameter and will cause an error.
+  Use instead: varbinary(max) instead of image, varchar(max) instead of text, nvarchar(max) instead of ntext."""
         else:
             db_row_limit_example  = f"SELECT * FROM {example_table} LIMIT 100;"
             db_limit_rule         = f"Use LIMIT N: SELECT * FROM table_name LIMIT 100. NEVER use TOP — {database_type} does not support it."
             db_date_now           = "NOW() or CURRENT_TIMESTAMP"
             db_explain            = "EXPLAIN ANALYZE SELECT ...  (shows actual execution stats)"
             db_pagination         = "LIMIT 100 OFFSET 0"
+            db_lob_rule           = ""
             db_string_concat      = "CONCAT() or || operator"
             db_isnull             = "COALESCE(col, default) or IFNULL(col, default)"
 
@@ -447,7 +450,7 @@ WHERE name = DB_NAME();
    - Current date/time: {db_date_now}
    - String concatenation: {db_string_concat}
    - Null fallback: {db_isnull}
-   - Put ONLY the SQL query inside the ```sql``` code block
+{f"   - {db_lob_rule}" if db_lob_rule else ""}   - Put ONLY the SQL query inside the ```sql``` code block
    - Put your explanation OUTSIDE the code block
    - Make the SQL clean and properly formatted
    - DO NOT add comments inside the SQL code block (we'll add them automatically)
