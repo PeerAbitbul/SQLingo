@@ -59,6 +59,7 @@ export interface ChatResponse {
   explanation: string;
   success: boolean;
   error?: string;
+  traceback?: string;
 }
 
 export interface QueryExecuteRequest {

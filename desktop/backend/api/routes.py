@@ -7,6 +7,7 @@ Architecture:
 - No authentication or usage limits
 - All data stored locally
 """
+import traceback as _traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
@@ -69,6 +70,7 @@ class ChatResponse(BaseModel):
     explanation: str
     success: bool
     error: Optional[str] = None
+    traceback: Optional[str] = None
 
 class QueryExecuteRequest(BaseModel):
     connection_string: str
@@ -473,7 +475,8 @@ async def generate_sql(request: ChatRequest):
             sql_query="",
             explanation="",
             success=False,
-            error=str(e)
+            error=str(e),
+            traceback=_traceback.format_exc(),
         )
 
 @router.post("/query/execute", response_model=QueryExecuteResponse)

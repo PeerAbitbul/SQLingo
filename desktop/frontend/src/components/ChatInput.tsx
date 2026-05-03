@@ -874,7 +874,11 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
       });
 
       if (!sqlResult.success) {
-        throw new Error(sqlResult.error || 'Failed to generate SQL');
+        const errMsg = sqlResult.error || 'Failed to generate SQL';
+        const fullMsg = sqlResult.traceback
+          ? `${errMsg}\n\n--- traceback ---\n${sqlResult.traceback}`
+          : errMsg;
+        throw new Error(fullMsg);
       }
 
       // Add AI response with SQL (no auto-execution)
