@@ -56,25 +56,49 @@ function loadSettings() {
 // Kill any process currently using the backend port (zombie cleanup)
 async function killPortProcess(port) {
   const { execSync } = require('child_process');
-  try {
-    if (process.platform === 'win32') {
-      const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
-      const pids = new Set();
-      result.split('\n').forEach(line => {
-        const match = line.match(/\s+(\d+)\s*$/);
-        if (match && match[1] && match[1] !== '0') pids.add(match[1]);
-      });
-      for (const pid of pids) {
-        try {
-          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
-          logToFile(`Killed zombie process PID ${pid} on port ${port}`);
-        } catch {}
-      }
-    } else {
+  if (process.platform !== 'win32') {
+    try {
       execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
+    } catch {}
+    return;
+  }
+
+  // Windows: PowerShell gives only LISTENING processes (not client-side ESTABLISHED connections)
+  let pids = [];
+  try {
+    const psOut = execSync(
+      `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess"`,
+      { encoding: 'utf8', timeout: 6000 }
+    );
+    pids = psOut.split('\n').map(s => s.trim()).filter(s => /^\d+$/.test(s) && s !== '0');
+    logToFile(`killPortProcess: PowerShell found PIDs on port ${port}: [${pids.join(', ') || 'none'}]`);
+  } catch (psErr) {
+    // Fallback: parse netstat manually, only LISTENING lines for the local address
+    logToFile(`killPortProcess: PowerShell failed (${psErr.message}), using netstat fallback`);
+    try {
+      const netOut = execSync(`netstat -ano`, { encoding: 'utf8', timeout: 6000 });
+      const pidSet = new Set();
+      netOut.split('\n').forEach(line => {
+        if (!line.includes('LISTENING')) return;
+        // Match only lines where the local address is 127.0.0.1:PORT or 0.0.0.0:PORT
+        if (!new RegExp(`[\\s.]${port}\\s`).test(line)) return;
+        const localMatch = line.match(/(?:127\.0\.0\.1|0\.0\.0\.0):(\d+)/);
+        if (!localMatch || localMatch[1] !== String(port)) return;
+        const pidMatch = line.match(/(\d+)\s*\r?$/);
+        if (pidMatch && pidMatch[1] !== '0') pidSet.add(pidMatch[1]);
+      });
+      pids = [...pidSet];
+      logToFile(`killPortProcess: netstat fallback found PIDs: [${pids.join(', ') || 'none'}]`);
+    } catch {}
+  }
+
+  for (const pid of pids) {
+    try {
+      execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+      logToFile(`Killed zombie process tree PID ${pid} on port ${port}`);
+    } catch (e) {
+      logToFile(`taskkill PID ${pid} failed: ${e.message}`);
     }
-  } catch {
-    // No process on port or command not available — that's fine
   }
 }
 
