@@ -9,6 +9,8 @@ import httpx
 
 from ai.base import AIProviderBase, ChatRequest, ChatResponse, Message
 
+_RETRY_STATUS_CODES = {429, 503, 504}
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,13 +90,22 @@ class GeminiProvider(AIProviderBase):
             if request.max_tokens:
                 payload["generationConfig"]["maxOutputTokens"] = request.max_tokens
             
-            # Make API request
+            # Make API request with retry for transient errors
             url = f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
-            
-            with httpx.Client(timeout=60.0) as client:
-                response = client.post(url, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            max_attempts = 3
+            data = None
+            for attempt in range(1, max_attempts + 1):
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(url, json=payload)
+                if response.status_code not in _RETRY_STATUS_CODES:
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+                if attempt == max_attempts:
+                    response.raise_for_status()
+                wait = 2 ** (attempt - 1)
+                logger.warning(f"Gemini API returned {response.status_code}, retrying in {wait}s (attempt {attempt}/{max_attempts})")
+                time.sleep(wait)
             
             # Extract data
             candidate = data["candidates"][0]
@@ -155,6 +166,14 @@ class GeminiProvider(AIProviderBase):
                 raise RuntimeError(
                     "Gemini model not found. The model may not be available in your region or with your API key. "
                     "Try using 'gemini-1.5-flash' or 'gemini-1.5-pro' instead."
+                )
+            elif "503" in error_str:
+                raise RuntimeError(
+                    "Gemini service is temporarily unavailable. Please try again in a moment."
+                )
+            elif "504" in error_str:
+                raise RuntimeError(
+                    "Gemini request timed out (gateway timeout). Please try again."
                 )
             else:
                 raise RuntimeError(f"Gemini API error: {error_str}")

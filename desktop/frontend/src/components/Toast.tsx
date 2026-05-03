@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import styled, { keyframes } from 'styled-components';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -93,6 +93,18 @@ const TracebackBox = styled.pre`
   width: 100%;
 `;
 
+const ShowMoreBtn = styled.button`
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 0 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  &:hover { color: #fff; }
+`;
+
 const CloseButton = styled.button`
   background: none;
   border: none;
@@ -127,6 +139,7 @@ export const Toast = ({ toast, onClose }: ToastProps) => {
   const [shortMsg, tracebackText] = hasTraceback
     ? toast.message.split(TRACEBACK_SEP)
     : [toast.message, null];
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     if (hasTraceback) {
@@ -145,7 +158,14 @@ export const Toast = ({ toast, onClose }: ToastProps) => {
       <IconWrapper>{getIcon(toast.type)}</IconWrapper>
       <div style={{ flex: 1 }}>
         <Message>{shortMsg}</Message>
-        {tracebackText && <TracebackBox>{tracebackText}</TracebackBox>}
+        {tracebackText && (
+          <>
+            <ShowMoreBtn onClick={() => setShowDetails(v => !v)}>
+              {showDetails ? 'Hide details' : 'Show details'}
+            </ShowMoreBtn>
+            {showDetails && <TracebackBox>{tracebackText}</TracebackBox>}
+          </>
+        )}
       </div>
       <CloseButton onClick={() => onClose(toast.id)}>
         ✕
