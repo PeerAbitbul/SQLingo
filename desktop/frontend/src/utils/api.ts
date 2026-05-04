@@ -90,6 +90,26 @@ export interface QueryActionResponse {
   error?: string;
 }
 
+export interface InterpretResultsRequest {
+  question: string;
+  sql_query: string;
+  columns: string[];
+  rows: any[][];
+  row_count: number;
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
+  ai_model?: string;
+  api_key?: string;
+  auth_mode?: 'api_key' | 'access_token';
+  bedrock_config?: BedrockConfig;
+  ollama_base_url?: string;
+}
+
+export interface InterpretResultsResponse {
+  answer: string;
+  success: boolean;
+  error?: string;
+}
+
 export interface GenerateTitleRequest {
   question: string;
   ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
@@ -318,6 +338,13 @@ class APIClient {
   async deleteFavorite(favoriteId: number): Promise<{ success: boolean }> {
     return this.request<{ success: boolean }>(`/favorites/${favoriteId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async interpretResults(data: InterpretResultsRequest): Promise<InterpretResultsResponse> {
+    return this.request<InterpretResultsResponse>('/chat/interpret', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

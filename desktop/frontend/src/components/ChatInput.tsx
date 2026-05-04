@@ -343,6 +343,14 @@ const AttachmentRemove = styled.button`
   &:hover { color: ${(props) => props.theme.colors.text}; }
 `;
 
+const WRITE_KEYWORDS = /^\s*(insert|update|delete|drop|truncate|alter|create|replace|merge|upsert|exec|execute|call|grant|revoke|deny)\b/i;
+
+function isReadOnlyQuery(sql: string): boolean {
+  // Strip SQL comments and leading whitespace before checking
+  const stripped = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  return !WRITE_KEYWORDS.test(stripped);
+}
+
 const SLASH_COMMANDS = [
   { cmd: '/permission mssql', desc: 'Show MSSQL minimum permissions' },
   { cmd: '/permission postgres', desc: 'Show PostgreSQL minimum permissions' },
@@ -360,6 +368,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
   const [isComparingPlans, setIsComparingPlans] = useState(false);
   const [showProviderDropdown, setShowProviderDropdown] = useState(false);
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
+  const [agentLoadingStage, setAgentLoadingStage] = useState<'running' | 'interpreting' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -881,12 +890,57 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
         throw new Error(fullMsg);
       }
 
-      // Add AI response with SQL (no auto-execution)
+      // If master switch is ON and SQL was generated, auto-execute + interpret
+      let messageContent = sqlResult.explanation;
+      let autoQueryResults: { columns: string[]; rows: any[][] } | undefined;
+
+      if (sqlResult.sql_query && isReadOnlyQuery(sqlResult.sql_query)) {
+        try {
+          const agentsStatus = await apiClient.getAllAgents();
+          if (!agentsStatus.master_paused) {
+            setAgentLoadingStage('running');
+            const execResult = await apiClient.executeQuery({
+              connection_string: connectionString,
+              database_type: connection.databaseType,
+              sql_query: sqlResult.sql_query,
+            });
+
+            if (execResult.success) {
+              autoQueryResults = { columns: execResult.columns, rows: execResult.rows };
+              setAgentLoadingStage('interpreting');
+              const interpResult = await apiClient.interpretResults({
+                question: trimmedInput,
+                sql_query: sqlResult.sql_query,
+                columns: execResult.columns,
+                rows: execResult.rows,
+                row_count: execResult.row_count,
+                ai_provider: aiProvider,
+                ai_model: aiModel,
+                api_key: apiKey,
+                auth_mode: authMode,
+                bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
+                  ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
+                  : undefined,
+                ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
+              });
+              if (interpResult.success && interpResult.answer) {
+                messageContent = interpResult.answer;
+              }
+            }
+          }
+        } catch {
+          // Non-critical: if agent check/execute/interpret fails, fall back to SQL-only
+        } finally {
+          setAgentLoadingStage(null);
+        }
+      }
+
       const aiMessage = {
         id: uuidv4(),
         role: 'assistant' as const,
-        content: sqlResult.explanation,
+        content: messageContent,
         sqlQuery: sqlResult.sql_query,
+        queryResults: autoQueryResults,
         timestamp: new Date(),
       };
       addMessage(chatId, aiMessage);
@@ -985,7 +1039,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     }
   };
 
-  const isLoading = generateSQLMutation.isPending || isAnalyzingPlan;
+  const isLoading = generateSQLMutation.isPending || isAnalyzingPlan || agentLoadingStage !== null;
 
   const handleSend = () => {
     if (!input.trim() && attachedFiles.length === 0) return;
@@ -1070,10 +1124,12 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
 
   return (
     <InputContainer>
-      {(generateSQLMutation.isPending || isAnalyzingPlan) && (
+      {isLoading && (
         <LoadingBar>
           {isAnalyzingPlan
             ? (isComparingPlans ? 'Comparing execution plans…' : 'Analyzing execution plan…')
+            : agentLoadingStage === 'running' ? 'Running query…'
+            : agentLoadingStage === 'interpreting' ? 'Interpreting results…'
             : 'Generating SQL…'}
         </LoadingBar>
       )}

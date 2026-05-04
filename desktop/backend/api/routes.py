@@ -99,6 +99,24 @@ class QueryExecuteResponse(BaseModel):
     success: bool
     error: Optional[str] = None
 
+class InterpretRequest(BaseModel):
+    question: str
+    sql_query: str
+    columns: List[str]
+    rows: List[List]
+    row_count: int
+    ai_provider: str
+    ai_model: Optional[str] = None
+    api_key: Optional[str] = None
+    auth_mode: Optional[str] = 'api_key'
+    bedrock_config: Optional[BedrockConfig] = None
+    ollama_base_url: Optional[str] = None
+
+class InterpretResponse(BaseModel):
+    answer: str
+    success: bool
+    error: Optional[str] = None
+
 # Routes
 @router.post("/connection/test", response_model=ConnectionTestResponse)
 async def test_connection(request: ConnectionTestRequest):
@@ -820,6 +838,71 @@ Return ONLY the title, nothing else."""
         words = request.question.split()[:4]
         title = ' '.join(words).capitalize() if words else 'New Chat'
         return GenerateTitleResponse(title=title, success=True)
+
+
+@router.post("/chat/interpret", response_model=InterpretResponse)
+async def interpret_query_results(request: InterpretRequest):
+    """Interpret SQL query results as a natural language answer."""
+    try:
+        if request.ai_provider == 'bedrock':
+            if not request.bedrock_config:
+                raise HTTPException(status_code=400, detail="AWS credentials required for Bedrock")
+            ai_client = AIClient(
+                provider=AIProvider.BEDROCK,
+                bedrock_config={
+                    'access_key': request.bedrock_config.access_key,
+                    'secret_key': request.bedrock_config.secret_key,
+                    'region': request.bedrock_config.region
+                }
+            )
+        elif request.ai_provider == 'ollama':
+            ai_client = AIClient(
+                provider=AIProvider.OLLAMA,
+                ollama_base_url=request.ollama_base_url
+            )
+        elif request.ai_provider == 'openrouter':
+            if not request.api_key:
+                raise HTTPException(status_code=400, detail="OpenRouter API key required")
+            ai_client = AIClient(provider=AIProvider.OPENROUTER, api_key=request.api_key)
+        else:
+            if not request.api_key:
+                raise HTTPException(status_code=400, detail="API key required")
+            ai_client = AIClient(
+                provider=AIProvider(request.ai_provider),
+                api_key=request.api_key,
+                auth_mode=request.auth_mode or 'api_key'
+            )
+
+        # Format result rows as a simple text table (max 20 rows to keep prompt short)
+        if request.row_count == 0:
+            results_text = "(no rows returned)"
+        else:
+            header = " | ".join(str(c) for c in request.columns)
+            sample_rows = request.rows[:20]
+            rows_text = "\n".join(" | ".join(str(v) for v in row) for row in sample_rows)
+            truncation = f"\n(showing {len(sample_rows)} of {request.row_count} rows)" if request.row_count > 20 else ""
+            results_text = f"{header}\n{rows_text}{truncation}"
+
+        prompt = f"""The user asked: "{request.question}"
+
+The following SQL was executed:
+{request.sql_query}
+
+Results ({request.row_count} rows):
+{results_text}
+
+Answer the user's question directly and concisely in natural language based on these results.
+- Use the same language the user used in their question.
+- If 0 rows: say clearly there are no results.
+- If there is data: summarize what was found concisely.
+- Do NOT include SQL, code blocks, or technical jargon in your answer.
+- Keep the answer to 1-3 sentences."""
+
+        answer = ai_client.generate_text(prompt, model=request.ai_model)
+        return InterpretResponse(answer=answer, success=True)
+
+    except Exception as e:
+        return InterpretResponse(answer="", success=False, error=str(e))
 
 
 # ========================================

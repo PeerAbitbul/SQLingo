@@ -109,6 +109,17 @@ class AIClient:
             'provider': response.provider
         }
     
+    def generate_text(self, prompt: str, model: str = None) -> str:
+        """Generate a short free-form text response (no SQL parsing)."""
+        request = ChatRequest(
+            messages=[Message(role="user", content=prompt)],
+            temperature=0.3,
+            max_tokens=500,
+            model=model
+        )
+        response: ChatResponse = self.client.chat(request)
+        return response.content.strip()
+
     def _add_sql_header(self, sql: str, provider: str, model: str) -> str:
         """Add header comment to SQL query"""
         from datetime import datetime
