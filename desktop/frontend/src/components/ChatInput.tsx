@@ -367,12 +367,12 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
   const [isAnalyzingPlanLocal, setIsAnalyzingPlanLocal] = useState(false);
   const [isComparingPlans, setIsComparingPlans] = useState(false);
   const [showProviderDropdown, setShowProviderDropdown] = useState(false);
-  const [messageQueue, setMessageQueue] = useState<string[]>([]);
+  const [messageQueue, setMessageQueue] = useState<{ text: string; messageId: string }[]>([]);
   const [agentLoadingStage, setAgentLoadingStage] = useState<'running' | 'interpreting' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { addMessage, chats, updateChat } = useChatStore();
+  const { addMessage, chats, updateChat, updateMessage } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
   const { getKeyForProvider, getModelForProvider, getAuthModeForProvider } = useAPIKeyStore();
@@ -770,7 +770,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     });
   };
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, existingMessageId?: string) => {
     // Check if message contains execution plan XML
     if (isExecutionPlanXML(text)) {
       const xmlStart = text.indexOf('<?xml');
@@ -829,14 +829,13 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
       }
     }
 
-    // Add user message
-    const userMessage = {
-      id: uuidv4(),
-      role: 'user' as const,
-      content: trimmedInput,
-      timestamp: new Date(),
-    };
-    addMessage(chatId, userMessage);
+    // Add user message (or activate a queued one)
+    const userMessageId = existingMessageId || uuidv4();
+    if (existingMessageId) {
+      updateMessage(chatId, existingMessageId, { queued: false, timestamp: new Date() });
+    } else {
+      addMessage(chatId, { id: userMessageId, role: 'user', content: trimmedInput, timestamp: new Date() });
+    }
 
     try {
       // Build connection string from connection details
@@ -1068,7 +1067,9 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     // Plain text message
     if (!typedText) return;
     if (isLoading) {
-      setMessageQueue(prev => [...prev, typedText]);
+      const queuedId = uuidv4();
+      addMessage(chatId, { id: queuedId, role: 'user', content: typedText, timestamp: new Date(), queued: true });
+      setMessageQueue(prev => [...prev, { text: typedText, messageId: queuedId }]);
       return;
     }
     sendMessage(typedText);
@@ -1078,7 +1079,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     if (!isLoading && messageQueue.length > 0) {
       const [next, ...rest] = messageQueue;
       setMessageQueue(rest);
-      setTimeout(() => sendMessage(next), 50);
+      setTimeout(() => sendMessage(next.text, next.messageId), 50);
     }
   }, [isLoading]);
 

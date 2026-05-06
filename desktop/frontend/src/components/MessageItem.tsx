@@ -199,8 +199,8 @@ export const MessageItem = ({ message, onRunQuery, onFavorite }: MessageItemProp
           rows={message.queryResults.rows}
         />
       )}
-      <Timestamp>
-        {new Date(message.timestamp).toLocaleTimeString()}
+      <Timestamp style={message.queued ? { opacity: 0.5, fontStyle: 'italic' } : undefined}>
+        {message.queued ? 'Queue' : new Date(message.timestamp).toLocaleTimeString()}
       </Timestamp>
     </MessageContainer>
   );

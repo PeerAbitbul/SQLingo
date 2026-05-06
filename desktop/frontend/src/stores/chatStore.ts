@@ -15,6 +15,7 @@ export interface Message {
   };
   isAgentAlert?: boolean;
   timestamp: Date;
+  queued?: boolean;
 }
 
 export interface Chat {
@@ -36,6 +37,7 @@ interface ChatState {
   setActiveChat: (chatId: string) => void;
   addMessage: (chatId: string, message: Message) => void;
   removeMessage: (chatId: string, messageId: string) => void;
+  updateMessage: (chatId: string, messageId: string, updates: Partial<Message>) => void;
   clearMessages: (chatId: string) => void;
   setLastUsedConnectionId: (connectionId: string) => void;
 }
@@ -105,6 +107,19 @@ export const useChatStore = create<ChatState>()(
           chats: state.chats.map((chat) =>
             chat.id === chatId
               ? { ...chat, messages: chat.messages.filter(m => m.id !== messageId) }
+              : chat
+          ),
+        })),
+      updateMessage: (chatId, messageId, updates) =>
+        set((state) => ({
+          chats: state.chats.map((chat) =>
+            chat.id === chatId
+              ? {
+                  ...chat,
+                  messages: chat.messages.map((m) =>
+                    m.id === messageId ? { ...m, ...updates } : m
+                  ),
+                }
               : chat
           ),
         })),

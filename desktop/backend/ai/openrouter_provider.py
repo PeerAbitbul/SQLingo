@@ -27,7 +27,7 @@ class OpenRouterProvider(AIProviderBase):
                 "X-Title": "SQLingo",
             },
         )
-        self.default_model = "meta-llama/llama-3.1-8b-instruct:free"
+        self.default_model = "google/gemma-4-31b-it:free"
 
     def chat(self, request: ChatRequest) -> ChatResponse:
         start_time = time.time()
@@ -60,7 +60,12 @@ class OpenRouterProvider(AIProviderBase):
                 latency_ms=latency_ms,
             )
         except OpenAIError as e:
-            raise Exception(f"OpenRouter API error: {str(e)}")
+            err_str = str(e)
+            if "402" in err_str and "spend limit" in err_str.lower():
+                raise Exception("OpenRouter API key has reached its spending limit. Please update the limit in your OpenRouter dashboard.")
+            if "401" in err_str:
+                raise Exception("Invalid OpenRouter API key. Please check your key in settings.")
+            raise Exception(f"OpenRouter API error: {err_str}")
         except Exception as e:
             raise Exception(f"OpenRouter error: {str(e)}")
 
