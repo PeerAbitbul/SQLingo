@@ -2,12 +2,13 @@
 Google Gemini AI provider.
 Supports Gemini 2.5 and other Google AI models.
 """
-from typing import List
+from typing import List, Generator
 import time
 import logging
+import json
 import httpx
 
-from ai.base import AIProviderBase, ChatRequest, ChatResponse, Message
+from ai.base import AIProviderBase, ChatRequest, ChatResponse
 
 _RETRY_STATUS_CODES = {429, 503, 504}
 
@@ -82,11 +83,10 @@ class GeminiProvider(AIProviderBase):
             # Prepare payload
             payload = {
                 "contents": contents,
-                "generationConfig": {
-                    "temperature": request.temperature,
-                }
+                "generationConfig": {"temperature": request.temperature},
             }
-            
+            if request.system:
+                payload["systemInstruction"] = {"parts": [{"text": request.system}]}
             if request.max_tokens:
                 payload["generationConfig"]["maxOutputTokens"] = request.max_tokens
             
@@ -181,6 +181,42 @@ class GeminiProvider(AIProviderBase):
             logger.error(f"Unexpected error in Gemini provider: {e}")
             raise RuntimeError(f"Gemini provider error: {str(e)}")
     
+    def stream_chat(self, request: ChatRequest) -> Generator[str, None, None]:
+        """Stream Gemini response tokens via SSE endpoint."""
+        model = request.model or self.default_model
+        contents = []
+        for msg in request.messages:
+            role = "model" if msg.role == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": msg.content}]})
+
+        payload = {
+            "contents": contents,
+            "generationConfig": {"temperature": request.temperature},
+        }
+        if request.system:
+            payload["systemInstruction"] = {"parts": [{"text": request.system}]}
+        if request.max_tokens:
+            payload["generationConfig"]["maxOutputTokens"] = request.max_tokens
+
+        url = f"{self.base_url}/models/{model}:streamGenerateContent?key={self.api_key}&alt=sse"
+        try:
+            with httpx.Client(timeout=120.0) as client:
+                with client.stream("POST", url, json=payload) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if not line.startswith("data: ") or line == "data: [DONE]":
+                            continue
+                        try:
+                            data = json.loads(line[6:])
+                            parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
+                            for part in parts:
+                                if "text" in part:
+                                    yield part["text"]
+                        except (json.JSONDecodeError, IndexError):
+                            pass
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"Gemini stream error: {str(e)}")
+
     def get_available_models(self) -> List[str]:
         """
         Get list of available Gemini models by querying the Google AI API.

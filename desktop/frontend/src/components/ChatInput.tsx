@@ -4,8 +4,8 @@ import { useChatStore } from '../stores/chatStore';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useAPIKeyStore } from '../stores/apiKeyStore';
-import { useGenerateSQL } from '../hooks/useAPI';
 import { apiClient } from '../utils/api';
+import type { ChatResponse } from '../utils/api';
 import { analyzeExecutionPlan, isExecutionPlanXML } from '../utils/executionPlanApi';
 import { showToast } from '../stores/toastStore';
 import { useOllamaStore } from '../stores/ollamaStore';
@@ -367,6 +367,7 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
   const [isAnalyzingPlanLocal, setIsAnalyzingPlanLocal] = useState(false);
   const [isComparingPlans, setIsComparingPlans] = useState(false);
   const [showProviderDropdown, setShowProviderDropdown] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [messageQueue, setMessageQueue] = useState<{ text: string; messageId: string }[]>([]);
   const [agentLoadingStage, setAgentLoadingStage] = useState<'running' | 'interpreting' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -377,8 +378,6 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
   const { getKeyForProvider, getModelForProvider, getAuthModeForProvider } = useAPIKeyStore();
   const { selectedModel: ollamaSelectedModel, baseUrl: ollamaBaseUrl } = useOllamaStore();
-
-  const generateSQLMutation = useGenerateSQL();
 
   useEffect(() => {
     if (!showProviderDropdown) return;
@@ -861,39 +860,72 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
             : msg.content,
         }));
 
-      // Generate SQL using BYOK mode
-      const sqlResult = await generateSQLMutation.mutateAsync({
-        question: trimmedInput,
-        connection_string: connectionString,
-        database_type: connection.databaseType,
-        ai_provider: aiProvider,
-        ai_model: aiModel,
-        api_key: apiKey,
-        auth_mode: authMode,
-        bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
-          ? {
-            access_key: bedrockAccessKey,
-            secret_key: bedrockSecretKey,
-            region: bedrockRegion,
-          }
-          : undefined,
-        ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
-        conversation_history: conversationHistory,
-      });
+      // Stream SQL generation
+      const streamingMsgId = uuidv4();
+      addMessage(chatId, { id: streamingMsgId, role: 'assistant', content: '', timestamp: new Date() });
+      setIsStreaming(true);
 
-      if (!sqlResult.success) {
-        const errMsg = sqlResult.error || 'Failed to generate SQL';
-        const fullMsg = sqlResult.traceback
-          ? `${errMsg}\n\n--- traceback ---\n${sqlResult.traceback}`
-          : errMsg;
-        throw new Error(fullMsg);
+      let accumulated = '';
+      let sqlResult: ChatResponse | null = null;
+      let streamError: string | null = null;
+
+      await apiClient.generateSQLStream(
+        {
+          question: trimmedInput,
+          connection_string: connectionString,
+          database_type: connection.databaseType,
+          ai_provider: aiProvider,
+          ai_model: aiModel,
+          api_key: apiKey,
+          auth_mode: authMode,
+          bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
+            ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
+            : undefined,
+          ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
+          conversation_history: conversationHistory,
+        },
+        {
+          onToken: (token) => {
+            accumulated += token;
+            updateMessage(chatId, streamingMsgId, { content: accumulated });
+          },
+          onDone: (result) => { sqlResult = result; },
+          onError: (msg) => { streamError = msg; },
+        }
+      );
+
+      setIsStreaming(false);
+
+      if (streamError || !sqlResult) {
+        const errMsg = streamError || 'Failed to generate SQL';
+        updateMessage(chatId, streamingMsgId, { content: `Error: ${errMsg}` });
+        showToast.error(errMsg);
+        return;
       }
 
+      const finalResult = sqlResult as ChatResponse;
+
+      if (!finalResult.success) {
+        const errMsg = finalResult.error || 'Failed to generate SQL';
+        const fullMsg = finalResult.traceback
+          ? `${errMsg}\n\n--- traceback ---\n${finalResult.traceback}`
+          : errMsg;
+        updateMessage(chatId, streamingMsgId, { content: `Error: ${errMsg}` });
+        showToast.error(fullMsg);
+        return;
+      }
+
+      // Update message with final explanation and sqlQuery
+      updateMessage(chatId, streamingMsgId, {
+        content: finalResult.explanation,
+        sqlQuery: finalResult.sql_query,
+      });
+
       // If master switch is ON and SQL was generated, auto-execute + interpret
-      let messageContent = sqlResult.explanation;
+      let messageContent = finalResult.explanation;
       let autoQueryResults: { columns: string[]; rows: any[][] } | undefined;
 
-      if (sqlResult.sql_query && isReadOnlyQuery(sqlResult.sql_query)) {
+      if (finalResult.sql_query && isReadOnlyQuery(finalResult.sql_query)) {
         try {
           const agentsStatus = await apiClient.getAllAgents();
           if (!agentsStatus.master_paused) {
@@ -901,7 +933,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
             const execResult = await apiClient.executeQuery({
               connection_string: connectionString,
               database_type: connection.databaseType,
-              sql_query: sqlResult.sql_query,
+              sql_query: finalResult.sql_query,
             });
 
             if (execResult.success) {
@@ -909,7 +941,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
               setAgentLoadingStage('interpreting');
               const interpResult = await apiClient.interpretResults({
                 question: trimmedInput,
-                sql_query: sqlResult.sql_query,
+                sql_query: finalResult.sql_query,
                 columns: execResult.columns,
                 rows: execResult.rows,
                 row_count: execResult.row_count,
@@ -934,15 +966,11 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
         }
       }
 
-      const aiMessage = {
-        id: uuidv4(),
-        role: 'assistant' as const,
+      updateMessage(chatId, streamingMsgId, {
         content: messageContent,
-        sqlQuery: sqlResult.sql_query,
+        sqlQuery: finalResult.sql_query,
         queryResults: autoQueryResults,
-        timestamp: new Date(),
-      };
-      addMessage(chatId, aiMessage);
+      });
 
       // Generate smart title if this is the first message
       // Use currentChat from above instead of fetching again
@@ -1038,7 +1066,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     }
   };
 
-  const isLoading = generateSQLMutation.isPending || isAnalyzingPlan || agentLoadingStage !== null;
+  const isLoading = isStreaming || isAnalyzingPlan || agentLoadingStage !== null;
 
   const handleSend = () => {
     if (!input.trim() && attachedFiles.length === 0) return;

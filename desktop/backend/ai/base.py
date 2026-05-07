@@ -3,7 +3,7 @@ Base AI provider class.
 All AI providers inherit from this base class.
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Optional, Generator
 from dataclasses import dataclass
 import time
 
@@ -19,6 +19,7 @@ class Message:
 class ChatRequest:
     """Request structure for chat completions."""
     messages: List[Message]
+    system: Optional[str] = None  # Separate system prompt (enables prompt caching)
     model: Optional[str] = None
     temperature: float = 0.7
     max_tokens: Optional[int] = None
@@ -79,6 +80,11 @@ class AIProviderBase(ABC):
         """
         pass
     
+    def stream_chat(self, request: ChatRequest) -> Generator[str, None, None]:
+        """Stream chat response as text tokens. Default: yields full response as one token."""
+        response = self.chat(request)
+        yield response.content
+
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, str]]:
         """
         Format messages for API request.

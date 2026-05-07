@@ -245,6 +245,58 @@ class APIClient {
     });
   }
 
+  async generateSQLStream(
+    data: ChatRequest,
+    callbacks: {
+      onToken: (token: string) => void;
+      onDone: (result: ChatResponse) => void;
+      onError: (message: string) => void;
+    }
+  ): Promise<void> {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/chat/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok || !response.body) {
+      callbacks.onError(`HTTP ${response.status}`);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'token') {
+            callbacks.onToken(event.content);
+          } else if (event.type === 'done') {
+            callbacks.onDone({
+              sql_query: event.sql_query ?? '',
+              explanation: event.explanation ?? '',
+              success: event.success ?? true,
+            });
+          } else if (event.type === 'error') {
+            callbacks.onError(event.message ?? 'Unknown error');
+          }
+        } catch {
+          // ignore malformed lines
+        }
+      }
+    }
+  }
+
   async executeQuery(data: QueryExecuteRequest): Promise<QueryExecuteResponse> {
     return this.request<QueryExecuteResponse>('/query/execute', {
       method: 'POST',

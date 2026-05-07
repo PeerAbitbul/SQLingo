@@ -4,7 +4,8 @@ Talks to a local Ollama server (default http://localhost:11434).
 Used to run Gemma 4 (and other local models) entirely on the user's machine.
 No API key required. No inference cost.
 """
-from typing import List, Optional
+from typing import List, Optional, Generator
+import json
 import time
 import logging
 import httpx
@@ -53,6 +54,8 @@ class OllamaProvider(AIProviderBase):
         try:
             model = request.model or self.default_model
             messages = self._format_messages(request.messages)
+            if request.system:
+                messages = [{"role": "system", "content": request.system}] + messages
 
             options = {"temperature": request.temperature}
             if request.max_tokens:
@@ -118,6 +121,39 @@ class OllamaProvider(AIProviderBase):
         except Exception as e:
             logger.error(f"Unexpected error in Ollama provider: {e}")
             raise RuntimeError(f"Ollama provider error: {str(e)}")
+
+    def stream_chat(self, request: ChatRequest) -> Generator[str, None, None]:
+        """Stream Ollama response tokens."""
+        model = request.model or self.default_model
+        messages = self._format_messages(request.messages)
+        if request.system:
+            messages = [{"role": "system", "content": request.system}] + messages
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "options": {"temperature": request.temperature},
+        }
+        if request.max_tokens:
+            payload["options"]["num_predict"] = request.max_tokens
+        try:
+            with httpx.Client(timeout=self.CHAT_TIMEOUT_SECONDS) as client:
+                with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            content = data.get("message", {}).get("content", "")
+                            if content:
+                                yield content
+                        except json.JSONDecodeError:
+                            pass
+        except httpx.ConnectError:
+            raise RuntimeError("Cannot connect to Ollama. Make sure Ollama is running.")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Ollama stream error ({e.response.status_code}): {e.response.text[:200]}")
 
     def get_available_models(self) -> List[str]:
         """
