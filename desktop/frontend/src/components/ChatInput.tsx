@@ -4,8 +4,8 @@ import { useChatStore } from '../stores/chatStore';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useAPIKeyStore } from '../stores/apiKeyStore';
-import { useGenerateSQL } from '../hooks/useAPI';
 import { apiClient } from '../utils/api';
+import type { ChatResponse } from '../utils/api';
 import { analyzeExecutionPlan, isExecutionPlanXML } from '../utils/executionPlanApi';
 import { showToast } from '../stores/toastStore';
 import { useOllamaStore } from '../stores/ollamaStore';
@@ -343,6 +343,14 @@ const AttachmentRemove = styled.button`
   &:hover { color: ${(props) => props.theme.colors.text}; }
 `;
 
+const WRITE_KEYWORDS = /^\s*(insert|update|delete|drop|truncate|alter|create|replace|merge|upsert|exec|execute|call|grant|revoke|deny)\b/i;
+
+function isReadOnlyQuery(sql: string): boolean {
+  // Strip SQL comments and leading whitespace before checking
+  const stripped = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  return !WRITE_KEYWORDS.test(stripped);
+}
+
 const SLASH_COMMANDS = [
   { cmd: '/permission mssql', desc: 'Show MSSQL minimum permissions' },
   { cmd: '/permission postgres', desc: 'Show PostgreSQL minimum permissions' },
@@ -359,17 +367,17 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
   const [isAnalyzingPlanLocal, setIsAnalyzingPlanLocal] = useState(false);
   const [isComparingPlans, setIsComparingPlans] = useState(false);
   const [showProviderDropdown, setShowProviderDropdown] = useState(false);
-  const [messageQueue, setMessageQueue] = useState<string[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [messageQueue, setMessageQueue] = useState<{ text: string; messageId: string }[]>([]);
+  const [agentLoadingStage, setAgentLoadingStage] = useState<'running' | 'interpreting' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { addMessage, chats, updateChat } = useChatStore();
+  const { addMessage, chats, updateChat, updateMessage } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
   const { getKeyForProvider, getModelForProvider, getAuthModeForProvider } = useAPIKeyStore();
   const { selectedModel: ollamaSelectedModel, baseUrl: ollamaBaseUrl } = useOllamaStore();
-
-  const generateSQLMutation = useGenerateSQL();
 
   useEffect(() => {
     if (!showProviderDropdown) return;
@@ -761,7 +769,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     });
   };
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, existingMessageId?: string) => {
     // Check if message contains execution plan XML
     if (isExecutionPlanXML(text)) {
       const xmlStart = text.indexOf('<?xml');
@@ -820,14 +828,13 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
       }
     }
 
-    // Add user message
-    const userMessage = {
-      id: uuidv4(),
-      role: 'user' as const,
-      content: trimmedInput,
-      timestamp: new Date(),
-    };
-    addMessage(chatId, userMessage);
+    // Add user message (or activate a queued one)
+    const userMessageId = existingMessageId || uuidv4();
+    if (existingMessageId) {
+      updateMessage(chatId, existingMessageId, { queued: false, timestamp: new Date() });
+    } else {
+      addMessage(chatId, { id: userMessageId, role: 'user', content: trimmedInput, timestamp: new Date() });
+    }
 
     try {
       // Build connection string from connection details
@@ -853,43 +860,117 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
             : msg.content,
         }));
 
-      // Generate SQL using BYOK mode
-      const sqlResult = await generateSQLMutation.mutateAsync({
-        question: trimmedInput,
-        connection_string: connectionString,
-        database_type: connection.databaseType,
-        ai_provider: aiProvider,
-        ai_model: aiModel,
-        api_key: apiKey,
-        auth_mode: authMode,
-        bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
-          ? {
-            access_key: bedrockAccessKey,
-            secret_key: bedrockSecretKey,
-            region: bedrockRegion,
-          }
-          : undefined,
-        ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
-        conversation_history: conversationHistory,
-      });
+      // Stream SQL generation
+      const streamingMsgId = uuidv4();
+      addMessage(chatId, { id: streamingMsgId, role: 'assistant', content: '', timestamp: new Date() });
+      setIsStreaming(true);
 
-      if (!sqlResult.success) {
-        const errMsg = sqlResult.error || 'Failed to generate SQL';
-        const fullMsg = sqlResult.traceback
-          ? `${errMsg}\n\n--- traceback ---\n${sqlResult.traceback}`
-          : errMsg;
-        throw new Error(fullMsg);
+      let accumulated = '';
+      let sqlResult: ChatResponse | null = null;
+      let streamError: string | null = null;
+
+      await apiClient.generateSQLStream(
+        {
+          question: trimmedInput,
+          connection_string: connectionString,
+          database_type: connection.databaseType,
+          ai_provider: aiProvider,
+          ai_model: aiModel,
+          api_key: apiKey,
+          auth_mode: authMode,
+          bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
+            ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
+            : undefined,
+          ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
+          conversation_history: conversationHistory,
+        },
+        {
+          onToken: (token) => {
+            accumulated += token;
+            updateMessage(chatId, streamingMsgId, { content: accumulated });
+          },
+          onDone: (result) => { sqlResult = result; },
+          onError: (msg) => { streamError = msg; },
+        }
+      );
+
+      setIsStreaming(false);
+
+      if (streamError || !sqlResult) {
+        const errMsg = streamError || 'Failed to generate SQL';
+        updateMessage(chatId, streamingMsgId, { content: `Error: ${errMsg}` });
+        showToast.error(errMsg);
+        return;
       }
 
-      // Add AI response with SQL (no auto-execution)
-      const aiMessage = {
-        id: uuidv4(),
-        role: 'assistant' as const,
-        content: sqlResult.explanation,
-        sqlQuery: sqlResult.sql_query,
-        timestamp: new Date(),
-      };
-      addMessage(chatId, aiMessage);
+      const finalResult = sqlResult as ChatResponse;
+
+      if (!finalResult.success) {
+        const errMsg = finalResult.error || 'Failed to generate SQL';
+        const fullMsg = finalResult.traceback
+          ? `${errMsg}\n\n--- traceback ---\n${finalResult.traceback}`
+          : errMsg;
+        updateMessage(chatId, streamingMsgId, { content: `Error: ${errMsg}` });
+        showToast.error(fullMsg);
+        return;
+      }
+
+      // Update message with final explanation and sqlQuery
+      updateMessage(chatId, streamingMsgId, {
+        content: finalResult.explanation,
+        sqlQuery: finalResult.sql_query,
+      });
+
+      // If master switch is ON and SQL was generated, auto-execute + interpret
+      let messageContent = finalResult.explanation;
+      let autoQueryResults: { columns: string[]; rows: any[][] } | undefined;
+
+      if (finalResult.sql_query && isReadOnlyQuery(finalResult.sql_query)) {
+        try {
+          const agentsStatus = await apiClient.getAllAgents();
+          if (!agentsStatus.master_paused) {
+            setAgentLoadingStage('running');
+            const execResult = await apiClient.executeQuery({
+              connection_string: connectionString,
+              database_type: connection.databaseType,
+              sql_query: finalResult.sql_query,
+            });
+
+            if (execResult.success) {
+              autoQueryResults = { columns: execResult.columns, rows: execResult.rows };
+              setAgentLoadingStage('interpreting');
+              const interpResult = await apiClient.interpretResults({
+                question: trimmedInput,
+                sql_query: finalResult.sql_query,
+                columns: execResult.columns,
+                rows: execResult.rows,
+                row_count: execResult.row_count,
+                ai_provider: aiProvider,
+                ai_model: aiModel,
+                api_key: apiKey,
+                auth_mode: authMode,
+                bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
+                  ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
+                  : undefined,
+                ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
+              });
+              if (interpResult.success && interpResult.answer) {
+                messageContent = interpResult.answer;
+              }
+            }
+          }
+        } catch {
+          // Non-critical: if agent check/execute/interpret fails, fall back to SQL-only
+        } finally {
+          setAgentLoadingStage(null);
+        }
+      }
+
+      updateMessage(chatId, streamingMsgId, {
+        content: messageContent,
+        sqlQuery: finalResult.sql_query,
+        queryResults: autoQueryResults,
+      });
 
       // Generate smart title if this is the first message
       // Use currentChat from above instead of fetching again
@@ -985,7 +1066,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     }
   };
 
-  const isLoading = generateSQLMutation.isPending || isAnalyzingPlan;
+  const isLoading = isStreaming || isAnalyzingPlan || agentLoadingStage !== null;
 
   const handleSend = () => {
     if (!input.trim() && attachedFiles.length === 0) return;
@@ -1014,7 +1095,9 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     // Plain text message
     if (!typedText) return;
     if (isLoading) {
-      setMessageQueue(prev => [...prev, typedText]);
+      const queuedId = uuidv4();
+      addMessage(chatId, { id: queuedId, role: 'user', content: typedText, timestamp: new Date(), queued: true });
+      setMessageQueue(prev => [...prev, { text: typedText, messageId: queuedId }]);
       return;
     }
     sendMessage(typedText);
@@ -1024,7 +1107,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     if (!isLoading && messageQueue.length > 0) {
       const [next, ...rest] = messageQueue;
       setMessageQueue(rest);
-      setTimeout(() => sendMessage(next), 50);
+      setTimeout(() => sendMessage(next.text, next.messageId), 50);
     }
   }, [isLoading]);
 
@@ -1070,10 +1153,12 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
 
   return (
     <InputContainer>
-      {(generateSQLMutation.isPending || isAnalyzingPlan) && (
+      {isLoading && (
         <LoadingBar>
           {isAnalyzingPlan
             ? (isComparingPlans ? 'Comparing execution plans…' : 'Analyzing execution plan…')
+            : agentLoadingStage === 'running' ? 'Running query…'
+            : agentLoadingStage === 'interpreting' ? 'Interpreting results…'
             : 'Generating SQL…'}
         </LoadingBar>
       )}

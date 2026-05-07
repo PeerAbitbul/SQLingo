@@ -7,8 +7,10 @@ Architecture:
 - No authentication or usage limits
 - All data stored locally
 """
+import json
 import traceback as _traceback
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from database.connection import DatabaseConnection
@@ -96,6 +98,24 @@ class QueryExecuteResponse(BaseModel):
     columns: List[str]
     rows: List[List]
     row_count: int
+    success: bool
+    error: Optional[str] = None
+
+class InterpretRequest(BaseModel):
+    question: str
+    sql_query: str
+    columns: List[str]
+    rows: List[List]
+    row_count: int
+    ai_provider: str
+    ai_model: Optional[str] = None
+    api_key: Optional[str] = None
+    auth_mode: Optional[str] = 'api_key'
+    bedrock_config: Optional[BedrockConfig] = None
+    ollama_base_url: Optional[str] = None
+
+class InterpretResponse(BaseModel):
+    answer: str
     success: bool
     error: Optional[str] = None
 
@@ -479,6 +499,264 @@ async def generate_sql(request: ChatRequest):
             traceback=_traceback.format_exc(),
         )
 
+@router.post("/chat/query/stream")
+def generate_sql_stream(request: ChatRequest):
+    """
+    Streaming version of /chat/query.
+    Returns Server-Sent Events: token chunks then a final done event.
+    """
+    def event_generator():
+        try:
+            db = DatabaseConnection(request.connection_string, request.database_type)
+            extractor = SchemaExtractor(db)
+            schema_text = extractor.get_full_schema_text()
+
+            if request.ai_provider == 'bedrock':
+                if not request.bedrock_config:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'AWS credentials required for Bedrock'})}\n\n"
+                    return
+                ai_client = AIClient(
+                    provider=AIProvider.BEDROCK,
+                    bedrock_config={
+                        'access_key': request.bedrock_config.access_key,
+                        'secret_key': request.bedrock_config.secret_key,
+                        'region': request.bedrock_config.region
+                    }
+                )
+            elif request.ai_provider == 'ollama':
+                ai_client = AIClient(
+                    provider=AIProvider.OLLAMA,
+                    ollama_base_url=request.ollama_base_url
+                )
+            elif request.ai_provider == 'openrouter':
+                if not request.api_key:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'OpenRouter API key required'})}\n\n"
+                    return
+                ai_client = AIClient(
+                    provider=AIProvider.OPENROUTER,
+                    api_key=request.api_key
+                )
+            else:
+                if not request.api_key:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'API key required'})}\n\n"
+                    return
+                ai_client = AIClient(
+                    provider=AIProvider(request.ai_provider),
+                    api_key=request.api_key,
+                    auth_mode=request.auth_mode or 'api_key'
+                )
+
+            history = None
+            if request.conversation_history:
+                history = [{'role': msg.role, 'content': msg.content} for msg in request.conversation_history]
+
+            result = None
+            for event_type, payload in ai_client.generate_sql_stream(
+                question=request.question,
+                schema=schema_text,
+                database_type=request.database_type,
+                model=request.ai_model,
+                conversation_history=history
+            ):
+                if event_type == "token":
+                    yield f"data: {json.dumps({'type': 'token', 'content': payload})}\n\n"
+                elif event_type == "done":
+                    result = payload
+
+            if result is None:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'No response from AI'})}\n\n"
+                return
+
+            # Handle procedure_request
+            if result.get('procedure_request'):
+                action = result['procedure_request'].get('action')
+                from database.schemas.postgres import POSTGRES_SCHEMA_QUERIES
+                from database.schemas.mysql import MYSQL_SCHEMA_QUERIES
+                from database.schemas.mssql import MSSQL_SCHEMA_QUERIES
+                db_type = request.database_type.lower()
+
+                if action == 'fetch_procedures_list':
+                    try:
+                        if db_type == 'postgresql':
+                            query = POSTGRES_SCHEMA_QUERIES['procedures_list']
+                        elif db_type == 'mysql':
+                            query = MYSQL_SCHEMA_QUERIES['procedures_list']
+                        elif db_type in ['mssql', 'sqlserver']:
+                            query = MSSQL_SCHEMA_QUERIES['procedures_list']
+                        else:
+                            raise ValueError(f"Unsupported database type: {request.database_type}")
+
+                        procedures_result = db.execute_query(query)
+                        procedures_text = "\n\nStored Procedures:\n"
+                        for row in procedures_result:
+                            proc_name = row.get('procedure_name') or row.get('PROCEDURE_NAME') or ''
+                            proc_type = row.get('type') or row.get('TYPE') or ''
+                            procedures_text += f"  - {proc_name} ({proc_type})\n"
+
+                        explanation = result.get('explanation', '') + procedures_text
+                        yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': explanation, 'success': True})}\n\n"
+                    except Exception as proc_error:
+                        if is_permission_error(str(proc_error), request.database_type):
+                            permission_info = get_permission_error_response('procedures', request.database_type)
+                            explanation = f"{permission_info['message']}\n\n{permission_info['grant_script']}"
+                            yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': explanation, 'success': True})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'error', 'message': str(proc_error)})}\n\n"
+                    return
+
+                elif action == 'fetch_procedure_definition':
+                    procedure_name = result['procedure_request'].get('procedure_name')
+                    if not procedure_name:
+                        yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': 'Error: No procedure name provided.', 'success': False})}\n\n"
+                        return
+                    try:
+                        if db_type == 'postgresql':
+                            query = POSTGRES_SCHEMA_QUERIES['procedure_definition']
+                            proc_result = db.execute_query(query, params=(procedure_name,))
+                        elif db_type == 'mysql':
+                            query = MYSQL_SCHEMA_QUERIES['procedure_definition']
+                            proc_result = db.execute_query(query, params=(procedure_name,))
+                        elif db_type in ['mssql', 'sqlserver']:
+                            query = MSSQL_SCHEMA_QUERIES['procedure_definition']
+                            query = query.replace('@procedure_name', f"'{procedure_name}'")
+                            proc_result = db.execute_query(query)
+                        else:
+                            raise ValueError(f"Unsupported database type: {request.database_type}")
+                    except Exception as proc_error:
+                        if is_permission_error(str(proc_error), request.database_type):
+                            permission_info = get_permission_error_response('procedures', request.database_type)
+                            explanation = f"{permission_info['message']}\n\n{permission_info['grant_script']}"
+                            yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': explanation, 'success': True})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'error', 'message': str(proc_error)})}\n\n"
+                        return
+
+                    if not proc_result or len(proc_result) == 0:
+                        if db_type == 'postgresql':
+                            list_query = POSTGRES_SCHEMA_QUERIES['procedures_list']
+                        elif db_type == 'mysql':
+                            list_query = MYSQL_SCHEMA_QUERIES['procedures_list']
+                        elif db_type in ['mssql', 'sqlserver']:
+                            list_query = MSSQL_SCHEMA_QUERIES['procedures_list']
+                        all_procedures = db.execute_query(list_query)
+                        similar = []
+                        search_lower = procedure_name.lower()
+                        for proc in all_procedures:
+                            proc_name_full = proc.get('procedure_name') or proc.get('PROCEDURE_NAME') or ''
+                            if search_lower in proc_name_full.lower() or proc_name_full.lower() in search_lower:
+                                similar.append(proc_name_full)
+                        if similar:
+                            suggestions = '\n'.join([f"  - {name}" for name in similar[:5]])
+                            explanation = f"Procedure '{procedure_name}' not found.\n\nDid you mean one of these?\n{suggestions}"
+                        else:
+                            explanation = f"Procedure '{procedure_name}' not found. Use the procedure list to see all available procedures."
+                        yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': explanation, 'success': True})}\n\n"
+                        return
+
+                    row = proc_result[0]
+                    proc_name = row.get('procedure_name') or row.get('PROCEDURE_NAME') or procedure_name
+                    proc_type = row.get('type') or row.get('TYPE') or 'PROCEDURE'
+                    proc_params = row.get('parameters') or row.get('PARAMETERS') or 'No parameters'
+                    proc_def = row.get('definition') or row.get('DEFINITION') or row.get('routine_definition') or row.get('ROUTINE_DEFINITION') or 'Definition not available'
+                    procedure_text = f"\n\nProcedure: {proc_name}\nType: {proc_type}\nParameters: {proc_params}\n\nDefinition:\n```sql\n{proc_def}\n```"
+                    explanation = result.get('explanation', '') + procedure_text
+                    yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': explanation, 'success': True})}\n\n"
+                    return
+
+            # Handle agent_request
+            if result.get('agent_request'):
+                action = result['agent_request'].get('action')
+                if action == 'create_agent':
+                    from database.agent_storage import agent_db
+                    from agent.scheduler import agent_scheduler
+                    agent_name = result['agent_request'].get('name', 'New SQLingo Agent')
+                    agent_schedule_type = result['agent_request'].get('schedule_type', 'cron')
+                    agent_schedule = result['agent_request'].get('schedule', '0 8 * * *')
+                    target_query = result['agent_request'].get('query_logic', '')
+                    agent_type = result['agent_request'].get('agent_type', 'monitor')
+                    try:
+                        agent_id = agent_db.create_agent({
+                            'name': agent_name,
+                            'connection_id': 'dynamic',
+                            'schedule': f"{agent_schedule_type}:{agent_schedule}",
+                            'query_logic': target_query,
+                            'destination': 'local',
+                            'agent_type': agent_type,
+                            'destination_config': {
+                                'connection_string': request.connection_string,
+                                'database_type': request.database_type
+                            }
+                        })
+                        agent_scheduler.add_agent_job(agent_id, agent_schedule, schedule_type=agent_schedule_type)
+                        type_label = {'monitor': 'Monitor', 'action': 'Action', 'conditional': 'Conditional'}.get(agent_type, agent_type.capitalize())
+                        success_msg = f"**{type_label} Agent Created Successfully**\n---\n"
+                        if agent_schedule_type == 'date':
+                            success_msg += f"- **Name:** {agent_name}\n- **Runs Once At:** `{agent_schedule}`\n"
+                        else:
+                            success_msg += f"- **Name:** {agent_name}\n- **Schedule:** `{agent_schedule}` (Cron)\n"
+                        success_msg += f"- **Type:** {type_label}\n\n"
+                        if agent_type == 'conditional':
+                            try:
+                                steps = json.loads(target_query)
+                                success_msg += f"> Condition check:\n```sql\n{steps[0]}\n```\n> Action if triggered:\n```sql\n{steps[1]}\n```\n"
+                            except Exception:
+                                success_msg += f"> Logic:\n```\n{target_query}\n```\n"
+                        else:
+                            success_msg += f"> Query:\n```sql\n{target_query}\n```\n"
+                        yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': success_msg, 'success': True})}\n\n"
+                    except Exception as e:
+                        yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': f'Failed to create agent: {str(e)}', 'success': False})}\n\n"
+                    return
+
+            # Handle analysis_request
+            if result.get('analysis_request'):
+                action = result['analysis_request'].get('action')
+                if action == 'analyze_now':
+                    query_logic = result['analysis_request'].get('query_logic', '')
+                    try:
+                        query_result = db.execute_select(query_logic, limit=50)
+                        cols = query_result.get('columns', [])
+                        rows = query_result.get('rows', [])
+                        if not rows:
+                            data_str = "No results found for this scan."
+                        else:
+                            data_str = " | ".join(cols) + "\n"
+                            for row in rows:
+                                data_str += " | ".join([str(val) for val in row]) + "\n"
+                        if len(data_str) > 3000:
+                            data_str = data_str[:3000] + "\n... (truncated to fit context token limits)"
+                        second_prompt = (
+                            f"My original request was: '{request.question}'.\n"
+                            f"You decided to run a background diagnostic query: \n{query_logic}\n\n"
+                            f"Here are the live results from the database:\n"
+                            f"---\n{data_str}\n---\n\n"
+                            f"Review these results and answer my original request directly. DO NOT output JSON or another tool request. "
+                            f"Reply with a conversational explanation and your professional recommendations. "
+                            f"If an action is required, you can include the SQL to fix the issue in a standard sql codeblock."
+                        )
+                        second_result = ai_client.generate_sql(
+                            question=second_prompt,
+                            schema="[Schema context omitted for brevity to save tokens during analysis phase]",
+                            database_type=request.database_type,
+                            model=request.ai_model,
+                            conversation_history=history
+                        )
+                        explanation = f"**Live Analysis Complete** ⚡\n---\n*The AI independently ran a background diagnostic query based on your request:*\n> `{query_logic.replace(chr(10), ' ')}`\n\n{second_result.get('explanation', '')}"
+                        yield f"data: {json.dumps({'type': 'done', 'sql_query': second_result.get('sql', ''), 'explanation': explanation, 'success': True})}\n\n"
+                    except Exception as e:
+                        explanation = f"Failed to execute immediate background analysis: {str(e)}\n\nQuery tried:\n```sql\n{query_logic}\n```"
+                        yield f"data: {json.dumps({'type': 'done', 'sql_query': '', 'explanation': explanation, 'success': False})}\n\n"
+                    return
+
+            # Normal response
+            yield f"data: {json.dumps({'type': 'done', 'sql_query': result.get('sql', ''), 'explanation': result.get('explanation', ''), 'success': True})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'traceback': _traceback.format_exc()})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @router.post("/query/execute", response_model=QueryExecuteResponse)
 async def execute_query(request: QueryExecuteRequest):
     """Execute SELECT query (read-only)"""
@@ -820,6 +1098,71 @@ Return ONLY the title, nothing else."""
         words = request.question.split()[:4]
         title = ' '.join(words).capitalize() if words else 'New Chat'
         return GenerateTitleResponse(title=title, success=True)
+
+
+@router.post("/chat/interpret", response_model=InterpretResponse)
+async def interpret_query_results(request: InterpretRequest):
+    """Interpret SQL query results as a natural language answer."""
+    try:
+        if request.ai_provider == 'bedrock':
+            if not request.bedrock_config:
+                raise HTTPException(status_code=400, detail="AWS credentials required for Bedrock")
+            ai_client = AIClient(
+                provider=AIProvider.BEDROCK,
+                bedrock_config={
+                    'access_key': request.bedrock_config.access_key,
+                    'secret_key': request.bedrock_config.secret_key,
+                    'region': request.bedrock_config.region
+                }
+            )
+        elif request.ai_provider == 'ollama':
+            ai_client = AIClient(
+                provider=AIProvider.OLLAMA,
+                ollama_base_url=request.ollama_base_url
+            )
+        elif request.ai_provider == 'openrouter':
+            if not request.api_key:
+                raise HTTPException(status_code=400, detail="OpenRouter API key required")
+            ai_client = AIClient(provider=AIProvider.OPENROUTER, api_key=request.api_key)
+        else:
+            if not request.api_key:
+                raise HTTPException(status_code=400, detail="API key required")
+            ai_client = AIClient(
+                provider=AIProvider(request.ai_provider),
+                api_key=request.api_key,
+                auth_mode=request.auth_mode or 'api_key'
+            )
+
+        # Format result rows as a simple text table (max 20 rows to keep prompt short)
+        if request.row_count == 0:
+            results_text = "(no rows returned)"
+        else:
+            header = " | ".join(str(c) for c in request.columns)
+            sample_rows = request.rows[:20]
+            rows_text = "\n".join(" | ".join(str(v) for v in row) for row in sample_rows)
+            truncation = f"\n(showing {len(sample_rows)} of {request.row_count} rows)" if request.row_count > 20 else ""
+            results_text = f"{header}\n{rows_text}{truncation}"
+
+        prompt = f"""The user asked: "{request.question}"
+
+The following SQL was executed:
+{request.sql_query}
+
+Results ({request.row_count} rows):
+{results_text}
+
+Answer the user's question directly and concisely in natural language based on these results.
+- Use the same language the user used in their question.
+- If 0 rows: say clearly there are no results.
+- If there is data: summarize what was found concisely.
+- Do NOT include SQL, code blocks, or technical jargon in your answer.
+- Keep the answer to 1-3 sentences."""
+
+        answer = ai_client.generate_text(prompt, model=request.ai_model)
+        return InterpretResponse(answer=answer, success=True)
+
+    except Exception as e:
+        return InterpretResponse(answer="", success=False, error=str(e))
 
 
 # ========================================

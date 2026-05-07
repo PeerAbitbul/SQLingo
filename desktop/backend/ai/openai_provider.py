@@ -2,13 +2,13 @@
 OpenAI AI provider.
 Supports GPT-4, GPT-4o, and other OpenAI models.
 """
-from typing import List
+from typing import List, Generator
 import time
 import logging
 from openai import OpenAI
 from openai import OpenAIError
 
-from ai.base import AIProviderBase, ChatRequest, ChatResponse, Message
+from ai.base import AIProviderBase, ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +52,18 @@ class OpenAIProvider(AIProviderBase):
         start_time = time.time()
         
         try:
-            # Format messages
             messages = self._format_messages(request.messages)
-            
-            # Prepare parameters
+            if request.system:
+                messages = [{"role": "system", "content": request.system}] + messages
+
             params = {
                 "model": request.model or self.default_model,
                 "messages": messages,
                 "temperature": request.temperature,
             }
-            
             if request.max_tokens:
                 params["max_tokens"] = request.max_tokens
-            
+
             # Make API request
             response = self.client.chat.completions.create(**params)
             
@@ -110,6 +109,27 @@ class OpenAIProvider(AIProviderBase):
             logger.error(f"Unexpected error in OpenAI provider: {e}")
             raise RuntimeError(f"OpenAI provider error: {str(e)}")
     
+    def stream_chat(self, request: ChatRequest) -> Generator[str, None, None]:
+        messages = self._format_messages(request.messages)
+        if request.system:
+            messages = [{"role": "system", "content": request.system}] + messages
+        params = {
+            "model": request.model or self.default_model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "stream": True,
+        }
+        if request.max_tokens:
+            params["max_tokens"] = request.max_tokens
+        try:
+            stream = self.client.chat.completions.create(**params)
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+        except OpenAIError as e:
+            raise RuntimeError(f"OpenAI stream error: {str(e)}")
+
     def get_available_models(self) -> List[str]:
         """
         Get list of available OpenAI models by querying the OpenAI API.

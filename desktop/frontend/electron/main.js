@@ -94,10 +94,21 @@ async function killPortProcess(port) {
 
   for (const pid of pids) {
     try {
-      execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+      execSync(`taskkill /F /T /PID ${pid}`, { encoding: 'utf8' });
       logToFile(`Killed zombie process tree PID ${pid} on port ${port}`);
     } catch (e) {
-      logToFile(`taskkill PID ${pid} failed: ${e.message}`);
+      const stderr = (e.stderr || '').toString().trim();
+      logToFile(`taskkill PID ${pid} failed: ${stderr || e.message} — trying Stop-Process fallback...`);
+      try {
+        execSync(
+          `powershell -NoProfile -Command "Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue"`,
+          { encoding: 'utf8', timeout: 5000 }
+        );
+        logToFile(`Stop-Process succeeded for PID ${pid}`);
+      } catch (psErr) {
+        const psStderr = (psErr.stderr || '').toString().trim();
+        logToFile(`Stop-Process also failed for PID ${pid}: ${psStderr || psErr.message}`);
+      }
     }
   }
 }
@@ -546,10 +557,15 @@ function createWindow() {
     logToFile('✓ Main window created successfully');
   });
 
-  // Open DevTools in development
+  // Open DevTools in development; Ctrl+Shift+I toggles DevTools in any mode
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i') {
+      mainWindow.webContents.toggleDevTools();
+    }
+  });
 
   mainWindow.on('closed', () => {
     logToFile('Main window closed');

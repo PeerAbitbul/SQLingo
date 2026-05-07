@@ -2,7 +2,8 @@
 AI Client
 Unified interface for different AI providers
 """
-from typing import Dict, Any, List
+import time
+from typing import Dict, Any, List, Tuple, Generator
 from ai.providers import AIProvider
 from ai.base import Message, ChatRequest, ChatResponse
 from ai.openai_provider import OpenAIProvider
@@ -70,15 +71,13 @@ class AIClient:
         Returns:
             Dict with 'sql', 'explanation', 'tokens', 'cost', 'latency' keys
         """
-        # Create prompt with schema and conversation history
-        prompt = self._create_prompt(question, schema, database_type, conversation_history)
-        
-        # Create chat request
+        system, messages = self._build_request_parts(question, schema, database_type, conversation_history)
         request = ChatRequest(
-            messages=[Message(role="user", content=prompt)],
-            temperature=0.7,  # Higher temperature for more natural conversation
+            messages=messages,
+            system=system,
+            temperature=0.7,
             max_tokens=2048,
-            model=model  # Pass model if provided
+            model=model,
         )
         
         # Call provider
@@ -109,6 +108,92 @@ class AIClient:
             'provider': response.provider
         }
     
+    def generate_text(self, prompt: str, model: str = None) -> str:
+        """Generate a short free-form text response (no SQL parsing)."""
+        request = ChatRequest(
+            messages=[Message(role="user", content=prompt)],
+            temperature=0.3,
+            max_tokens=500,
+            model=model
+        )
+        response: ChatResponse = self.client.chat(request)
+        return response.content.strip()
+
+    def generate_sql_stream(
+        self,
+        question: str,
+        schema: str,
+        database_type: str,
+        model: str = None,
+        conversation_history: List[Dict[str, str]] = None,
+    ) -> Generator[Tuple[str, Any], None, None]:
+        """Generator that yields ('token', text) then ('done', result_dict)."""
+        system, messages = self._build_request_parts(question, schema, database_type, conversation_history)
+        request = ChatRequest(
+            messages=messages,
+            system=system,
+            temperature=0.7,
+            max_tokens=2048,
+            model=model,
+        )
+        full_content = ""
+        start_time = time.time()
+        for token in self.client.stream_chat(request):
+            full_content += token
+            yield ("token", token)
+
+        parsed = self._parse_response(full_content)
+        if parsed["sql"]:
+            parsed["sql"] = self._add_sql_header(
+                parsed["sql"], self.client.provider_name, model or self.client.default_model
+            )
+        yield ("done", {
+            **parsed,
+            "latency_ms": int((time.time() - start_time) * 1000),
+            "model": model or self.client.default_model,
+            "provider": self.client.provider_name,
+            "tokens_prompt": 0,
+            "tokens_completion": 0,
+            "tokens_total": 0,
+        })
+
+    def _build_system_prompt(self, schema: str, database_type: str) -> str:
+        """Return the stable system prompt (instructions + schema, no history/question)."""
+        full = self._create_prompt("__PLACEHOLDER__", schema, database_type, conversation_history=None)
+        suffix = "\nUser: __PLACEHOLDER__\n"
+        return full[:-len(suffix)] if full.endswith(suffix) else full
+
+    def _build_request_parts(
+        self,
+        question: str,
+        schema: str,
+        database_type: str,
+        conversation_history: List[Dict[str, str]] = None,
+    ) -> Tuple[str, List[Message]]:
+        """Returns (system_prompt, messages) — system goes to provider cache, messages are proper multi-turn."""
+        history_messages: List[Message] = []
+
+        if conversation_history:
+            for msg in conversation_history[-8:]:
+                content = msg["content"]
+                role = msg["role"]
+                if "<?xml" in content and ("ShowPlanXML" in content or "showplan" in content.lower()):
+                    xml_start = content.find("<?xml")
+                    user_question = content[:xml_start].strip()
+                    xml_size_kb = (len(content) - xml_start) // 1024
+                    xml_sample = content[xml_start:xml_start + 600]
+                    content = (
+                        f"{user_question}\n[Execution plan XML — {xml_size_kb} KB attached]\n{xml_sample}…"
+                        if user_question
+                        else f"[Execution plan XML — {xml_size_kb} KB attached]\n{xml_sample}…"
+                    )
+                elif role == "assistant" and len(content) > 1500:
+                    content = content[:1500] + "… [truncated]"
+                history_messages.append(Message(role=role, content=content))
+
+        system = self._build_system_prompt(schema, database_type)
+        return system, history_messages + [Message(role="user", content=question)]
+
     def _add_sql_header(self, sql: str, provider: str, model: str) -> str:
         """Add header comment to SQL query"""
         from datetime import datetime

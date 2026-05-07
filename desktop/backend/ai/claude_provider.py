@@ -2,12 +2,12 @@
 Anthropic Claude AI provider.
 Supports Claude 3 and 3.5 models.
 """
-from typing import List
+from typing import List, Generator
 import time
 import logging
 from anthropic import Anthropic, AnthropicError
 
-from ai.base import AIProviderBase, ChatRequest, ChatResponse, Message
+from ai.base import AIProviderBase, ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
 
@@ -60,27 +60,16 @@ class ClaudeProvider(AIProviderBase):
         start_time = time.time()
         
         try:
-            # Extract system message if present
-            system_message = None
-            messages = []
-            
-            for msg in request.messages:
-                if msg.role == "system":
-                    system_message = msg.content
-                else:
-                    messages.append({"role": msg.role, "content": msg.content})
-            
-            # Prepare parameters
+            messages = [{"role": m.role, "content": m.content} for m in request.messages if m.role != "system"]
+
             params = {
                 "model": request.model or self.default_model,
                 "messages": messages,
                 "temperature": request.temperature,
                 "max_tokens": request.max_tokens or 4096,
+                "system": self._build_system_param(request),
             }
-            
-            if system_message:
-                params["system"] = system_message
-            
+
             # Make API request
             response = self.client.messages.create(**params)
             
@@ -131,6 +120,38 @@ class ClaudeProvider(AIProviderBase):
             logger.error(f"Unexpected error in Claude provider: {e}")
             raise RuntimeError(f"Claude provider error: {str(e)}")
     
+    def _build_system_param(self, request: ChatRequest):
+        """Build Claude system parameter with prompt caching."""
+        # Prefer request.system (new architecture), fall back to system role in messages
+        system_text = request.system
+        if not system_text:
+            for m in request.messages:
+                if m.role == "system":
+                    system_text = m.content
+                    break
+        if not system_text:
+            return None
+        return [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
+
+    def stream_chat(self, request: ChatRequest) -> Generator[str, None, None]:
+        """Stream Claude response tokens using prompt caching."""
+        messages = [{"role": m.role, "content": m.content} for m in request.messages if m.role != "system"]
+        params = {
+            "model": request.model or self.default_model,
+            "messages": messages,
+            "max_tokens": request.max_tokens or 4096,
+            "temperature": request.temperature,
+        }
+        system_param = self._build_system_param(request)
+        if system_param:
+            params["system"] = system_param
+        try:
+            with self.client.messages.stream(**params) as stream:
+                for text in stream.text_stream:
+                    yield text
+        except AnthropicError as e:
+            raise RuntimeError(f"Claude stream error: {str(e)}")
+
     def get_available_models(self) -> List[str]:
         """
         Get list of available Claude models.
