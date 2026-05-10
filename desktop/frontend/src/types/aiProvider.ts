@@ -3,12 +3,7 @@
  * Centralized type definitions for AI providers used across the app
  */
 
-export type AIProvider = 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
-
-export type AuthMode = 'api_key' | 'access_token';
-
-/** Providers that support access token authentication */
-export const ACCESS_TOKEN_PROVIDERS: AIProvider[] = ['claude', 'openai'];
+export type AIProvider = 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter' | 'claude_cli';
 
 export const AI_PROVIDERS = {
   CLAUDE: 'claude' as const,
@@ -17,6 +12,7 @@ export const AI_PROVIDERS = {
   BEDROCK: 'bedrock' as const,
   OLLAMA: 'ollama' as const,
   OPENROUTER: 'openrouter' as const,
+  CLAUDE_CLI: 'claude_cli' as const,
 };
 
 export interface AIProviderConfig {
@@ -28,6 +24,13 @@ export interface AIProviderConfig {
 }
 
 export const AI_PROVIDER_CONFIGS: Record<AIProvider, AIProviderConfig> = {
+  claude_cli: {
+    name: 'Claude CLI',
+    color: '#D97757',
+    requiresAPIKey: false,
+    requiresSubscription: true,
+    isLocal: true,
+  },
   claude: {
     name: 'Claude',
     color: '#8B5CF6',

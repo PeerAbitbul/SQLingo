@@ -60,11 +60,10 @@ class ChatRequest(BaseModel):
     database_type: str
     ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock', 'ollama'
     ai_model: Optional[str] = None  # Optional: specific model to use
-    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock/ollama)
-    auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
-    bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
-    ollama_base_url: Optional[str] = None  # For Ollama local mode (default: http://localhost:11434)
-    conversation_history: Optional[List[ConversationMessage]] = None  # Chat history for context
+    api_key: Optional[str] = None
+    bedrock_config: Optional[BedrockConfig] = None
+    ollama_base_url: Optional[str] = None
+    conversation_history: Optional[List[ConversationMessage]] = None
 
 
 class ChatResponse(BaseModel):
@@ -83,10 +82,9 @@ class GenerateTitleRequest(BaseModel):
     question: str
     ai_provider: str  # 'claude', 'openai', 'gemini', 'bedrock', 'ollama'
     ai_model: Optional[str] = None  # Optional: specific model to use
-    api_key: Optional[str] = None  # For BYOK mode (not used for bedrock/ollama)
-    auth_mode: Optional[str] = 'api_key'  # 'api_key' or 'access_token'
-    bedrock_config: Optional[BedrockConfig] = None  # For Bedrock BYOK mode
-    ollama_base_url: Optional[str] = None  # For Ollama local mode (default: http://localhost:11434)
+    api_key: Optional[str] = None
+    bedrock_config: Optional[BedrockConfig] = None
+    ollama_base_url: Optional[str] = None
 
 
 class GenerateTitleResponse(BaseModel):
@@ -110,7 +108,6 @@ class InterpretRequest(BaseModel):
     ai_provider: str
     ai_model: Optional[str] = None
     api_key: Optional[str] = None
-    auth_mode: Optional[str] = 'api_key'
     bedrock_config: Optional[BedrockConfig] = None
     ollama_base_url: Optional[str] = None
 
@@ -120,6 +117,15 @@ class InterpretResponse(BaseModel):
     error: Optional[str] = None
 
 # Routes
+@router.get("/cli/status")
+async def cli_status():
+    """Check which CLI tools are installed and available."""
+    from ai.claude_cli_provider import ClaudeCLIProvider
+    return {
+        "claude_cli": ClaudeCLIProvider.is_available(),
+        "openai_cli": False,  # No supported ChatGPT CLI available yet
+    }
+
 @router.post("/connection/test", response_model=ConnectionTestResponse)
 async def test_connection(request: ConnectionTestRequest):
     """Test database connection"""
@@ -206,15 +212,14 @@ async def generate_sql(request: ChatRequest):
                 provider=AIProvider.OPENROUTER,
                 api_key=request.api_key
             )
+        elif request.ai_provider == 'claude_cli':
+            ai_client = AIClient(provider=AIProvider.CLAUDE_CLI)
         else:
-            # Other providers use API key or access token
             if not request.api_key:
-                raise HTTPException(status_code=400, detail="API key or access token required")
-
+                raise HTTPException(status_code=400, detail="API key required")
             ai_client = AIClient(
                 provider=AIProvider(request.ai_provider),
                 api_key=request.api_key,
-                auth_mode=request.auth_mode or 'api_key'
             )
 
         # Convert conversation history to dict format
@@ -536,6 +541,8 @@ def generate_sql_stream(request: ChatRequest):
                     provider=AIProvider.OPENROUTER,
                     api_key=request.api_key
                 )
+            elif request.ai_provider == 'claude_cli':
+                ai_client = AIClient(provider=AIProvider.CLAUDE_CLI)
             else:
                 if not request.api_key:
                     yield f"data: {json.dumps({'type': 'error', 'message': 'API key required'})}\n\n"
@@ -543,7 +550,6 @@ def generate_sql_stream(request: ChatRequest):
                 ai_client = AIClient(
                     provider=AIProvider(request.ai_provider),
                     api_key=request.api_key,
-                    auth_mode=request.auth_mode or 'api_key'
                 )
 
             history = None
@@ -915,14 +921,11 @@ async def generate_chat_title(request: GenerateTitleRequest):
                 ollama_base_url=request.ollama_base_url
             )
         else:
-            # Other providers use API key or access token
             if not request.api_key:
-                raise HTTPException(status_code=400, detail="API key or access token required")
-
+                raise HTTPException(status_code=400, detail="API key required")
             ai_client = AIClient(
                 provider=AIProvider(request.ai_provider),
                 api_key=request.api_key,
-                auth_mode=request.auth_mode or 'api_key'
             )
 
         # For BYOK mode, generate title using AI
@@ -946,41 +949,32 @@ Return ONLY the title, nothing else."""
                 response = await client.post(
                     'https://api.openai.com/v1/chat/completions',
                     headers={
-                        'Authorization': f'Bearer {request.api_key}',
-                        'Content-Type': 'application/json'
+                        'Authorization': f'Bearer {request.api_key or ""}',
+                        'Content-Type': 'application/json',
                     },
                     json={
                         'model': request.ai_model or 'gpt-4o-mini',
                         'messages': [{'role': 'user', 'content': prompt}],
                         'max_tokens': 20,
-                        'temperature': 0.7
+                        'temperature': 0.7,
                     },
-                    timeout=10.0
+                    timeout=10.0,
                 )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    title = result['choices'][0]['message']['content'].strip()
-                    return GenerateTitleResponse(title=title, success=True)
-                    
+
+            if response.status_code == 200:
+                result = response.json()
+                title = result['choices'][0]['message']['content'].strip()
+                return GenerateTitleResponse(title=title, success=True)
+
         elif request.ai_provider == 'claude':
             async with httpx.AsyncClient() as client:
-                # Use Bearer token for access_token mode, x-api-key for api_key mode
-                if request.auth_mode == 'access_token':
-                    claude_headers = {
-                        'Authorization': f'Bearer {request.api_key}',
-                        'anthropic-version': '2023-06-01',
-                        'Content-Type': 'application/json'
-                    }
-                else:
-                    claude_headers = {
-                        'x-api-key': request.api_key,
-                        'anthropic-version': '2023-06-01',
-                        'Content-Type': 'application/json'
-                    }
                 response = await client.post(
                     'https://api.anthropic.com/v1/messages',
-                    headers=claude_headers,
+                    headers={
+                        'x-api-key': request.api_key or '',
+                        'anthropic-version': '2023-06-01',
+                        'Content-Type': 'application/json'
+                    },
                     json={
                         'model': request.ai_model or 'claude-3-5-sonnet-latest',
                         'max_tokens': 20,
@@ -988,7 +982,7 @@ Return ONLY the title, nothing else."""
                     },
                     timeout=10.0
                 )
-                
+
                 if response.status_code == 200:
                     result = response.json()
                     title = result['content'][0]['text'].strip()
@@ -1130,7 +1124,6 @@ async def interpret_query_results(request: InterpretRequest):
             ai_client = AIClient(
                 provider=AIProvider(request.ai_provider),
                 api_key=request.api_key,
-                auth_mode=request.auth_mode or 'api_key'
             )
 
         # Format result rows as a simple text table (max 20 rows to keep prompt short)
@@ -1219,13 +1212,14 @@ async def analyze_execution_plan(
                             provider=AIProvider.OLLAMA,
                             ollama_base_url=request.ollama_base_url
                         )
+                    elif request.ai_provider == 'claude_cli':
+                        ai_client = AIClient(provider=AIProvider.CLAUDE_CLI)
                     else:
                         if not request.api_key:
                             raise ValueError("API key required")
                         ai_client = AIClient(
                             provider=AIProvider(request.ai_provider),
                             api_key=request.api_key,
-                            auth_mode=request.auth_mode or 'api_key'
                         )
                     ai_insights = await get_ai_comparison(
                         ai_client, analysis, analysis_2,
@@ -1269,13 +1263,14 @@ async def analyze_execution_plan(
                         provider=AIProvider.OLLAMA,
                         ollama_base_url=getattr(request, 'ollama_base_url', None)
                     )
+                elif request.ai_provider == 'claude_cli':
+                    ai_client = AIClient(provider=AIProvider.CLAUDE_CLI)
                 else:
                     if not request.api_key:
-                        raise ValueError("API key or access token required")
+                        raise ValueError("API key required")
                     ai_client = AIClient(
                         provider=AIProvider(request.ai_provider),
                         api_key=request.api_key,
-                        auth_mode=request.auth_mode or 'api_key'
                     )
 
                 ai_insights = await get_ai_insights(
