@@ -2,9 +2,9 @@ import styled from 'styled-components';
 import { useState, useRef, useEffect } from 'react';
 import { useAPIKeyStore } from '../stores/apiKeyStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useCLIStore } from '../stores/cliStore';
 import { apiClient } from '../utils/api';
 import { showToast } from '../stores/toastStore';
-import { ACCESS_TOKEN_PROVIDERS, type AuthMode } from '../types/aiProvider';
 
 interface APIKeyManagerProps {
   isOpen: boolean;
@@ -331,40 +331,89 @@ const Select = styled.select`
   }
 `;
 
-const AuthModeToggle = styled.div`
-  display: flex;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid ${(props) => props.theme.colors.border};
-  margin-bottom: 16px;
+const OAuthSection = styled.div`
+  margin-bottom: 20px;
 `;
 
-const AuthModeOption = styled.button<{ $active: boolean }>`
-  flex: 1;
-  padding: 8px 12px;
-  background: ${(props) => props.$active ? props.theme.colors.primary + '22' : 'transparent'};
-  color: ${(props) => props.$active ? props.theme.colors.primary : props.theme.colors.textSecondary};
-  border: none;
-  font-size: 12px;
+const OAuthButton = styled.button<{ $connected: boolean }>`
+  width: 100%;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid ${(props) => props.$connected ? '#10B981' : props.theme.colors.border};
+  background: ${(props) => props.$connected ? '#10B98122' : props.theme.colors.surface};
+  color: ${(props) => props.$connected ? '#10B981' : props.theme.colors.text};
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   transition: all 0.2s;
 
-  &:first-child {
-    border-right: 1px solid ${(props) => props.theme.colors.border};
+  &:hover {
+    opacity: 0.85;
+    transform: translateY(-1px);
   }
 
-  &:hover {
-    background: ${(props) => props.$active ? props.theme.colors.primary + '22' : props.theme.colors.surface};
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
   }
 `;
 
-const AuthModeHint = styled.div`
-  font-size: 11px;
-  color: ${(props) => props.theme.colors.textSecondary};
-  margin-top: 6px;
-  line-height: 1.4;
-  opacity: 0.8;
+const OAuthDivider = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+
+  &::before, &::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: ${(props) => props.theme.colors.border};
+  }
+
+  span {
+    font-size: 11px;
+    color: ${(props) => props.theme.colors.textSecondary};
+    white-space: nowrap;
+  }
+`;
+
+const InstallBox = styled.div`
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #F59E0B44;
+  background: #F59E0B11;
+  font-size: 12px;
+  color: ${(props) => props.theme.colors.text};
+  line-height: 1.6;
+`;
+
+const InstallTitle = styled.div`
+  font-weight: 600;
+  color: #F59E0B;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+`;
+
+const InstallCode = styled.code`
+  display: block;
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: ${(props) => props.theme.colors.surface};
+  border-radius: 6px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 12px;
+  color: ${(props) => props.theme.colors.text};
+  border: 1px solid ${(props) => props.theme.colors.border};
+  user-select: all;
 `;
 
 const Footer = styled.div`
@@ -463,10 +512,8 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   const {
     claudeKey, openaiKey, geminiKey, openrouterKey,
     claudeModel, openaiModel, geminiModel, bedrockModel, openrouterModel,
-    claudeAuthMode, openaiAuthMode,
     setClaudeKey, setOpenaiKey, setGeminiKey, setOpenrouterKey,
     setClaudeModel, setOpenaiModel, setGeminiModel, setBedrockModel, setOpenrouterModel,
-    setClaudeAuthMode, setOpenaiAuthMode
   } = useAPIKeyStore();
 
   const {
@@ -509,10 +556,20 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   const [localBedrockSecretKey, setLocalBedrockSecretKey] = useState(bedrockSecretKey);
   const [localBedrockRegion, setLocalBedrockRegion] = useState(bedrockRegion);
 
-  const [localAuthModes, setLocalAuthModes] = useState<{ claude: AuthMode; openai: AuthMode }>({
-    claude: claudeAuthMode,
-    openai: openaiAuthMode,
-  });
+  const { claudeCliMode, setClaudeCliMode } = useCLIStore();
+  const [localClaudeCliMode, setLocalClaudeCliMode] = useState(claudeCliMode);
+  const [claudeCliAvailable, setClaudeCliAvailable] = useState<boolean | null>(null);
+  const [claudeCliChecking, setClaudeCliChecking] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'claude') return;
+    setClaudeCliChecking(true);
+    apiClient.getCliStatus()
+      .then((status) => setClaudeCliAvailable(status.claude_cli))
+      .catch(() => setClaudeCliAvailable(false))
+      .finally(() => setClaudeCliChecking(false));
+  }, [isOpen, activeTab]);
+
 
   const [localModels, setLocalModels] = useState({
     claude: claudeModel,
@@ -525,18 +582,6 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   const validateApiKey = (provider: string, key: string): boolean => {
     // Skip validation for empty keys (user might want to clear it)
     if (!key || key.trim() === '') return true;
-
-    // Skip format validation for access token mode - tokens have unpredictable formats
-    const authMode = (provider === 'claude' || provider === 'openai')
-      ? localAuthModes[provider]
-      : 'api_key';
-    if (authMode === 'access_token') {
-      if (key.length < 10) {
-        showToast.error('Access token seems too short');
-        return false;
-      }
-      return true;
-    }
 
     // Validate API key format based on provider
     switch (provider) {
@@ -617,10 +662,6 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
     setBedrockModel(localModels.bedrock);
     setOpenrouterModel(localModels.openrouter);
 
-    // Save auth modes
-    setClaudeAuthMode(localAuthModes.claude);
-    setOpenaiAuthMode(localAuthModes.openai);
-
     // Save Bedrock credentials (Access Key, Secret Key, Region)
     setBedrockCredentials(localKeys.bedrock, localBedrockSecretKey, localBedrockRegion);
 
@@ -637,11 +678,7 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
   const config = providerConfig[activeTab];
   const currentKey = localKeys[activeTab];
   const currentModel = localModels[activeTab];
-  const supportsAccessToken = ACCESS_TOKEN_PROVIDERS.includes(activeTab);
-  const currentAuthMode = (activeTab === 'claude' || activeTab === 'openai')
-    ? localAuthModes[activeTab]
-    : 'api_key' as AuthMode;
-  const isAccessToken = currentAuthMode === 'access_token';
+  const isCliMode = activeTab === 'claude' && localClaudeCliMode;
 
   return (
     <Overlay $isOpen={isOpen} onClick={onClose}>
@@ -684,52 +721,68 @@ export const APIKeyManager = ({ isOpen, onClose }: APIKeyManagerProps) => {
         </TabsWrapper>
 
         <Content>
-          {supportsAccessToken && (
-            <FormGroup>
-              <Label>Authentication Method</Label>
-              <AuthModeToggle>
-                <AuthModeOption
-                  $active={!isAccessToken}
-                  onClick={() => setLocalAuthModes({ ...localAuthModes, [activeTab]: 'api_key' as AuthMode })}
-                >
-                  API Key (Recommended)
-                </AuthModeOption>
-                <AuthModeOption
-                  $active={isAccessToken}
-                  onClick={() => setLocalAuthModes({ ...localAuthModes, [activeTab]: 'access_token' as AuthMode })}
-                >
-                  Access Token
-                </AuthModeOption>
-              </AuthModeToggle>
-            </FormGroup>
+          {activeTab === 'claude' && (
+            <OAuthSection>
+              <Label>Claude CLI Mode</Label>
+              <OAuthButton
+                $connected={localClaudeCliMode}
+                disabled={claudeCliChecking || claudeCliAvailable === false}
+                onClick={() => {
+                  if (claudeCliAvailable === false) return;
+                  const next = !localClaudeCliMode;
+                  setLocalClaudeCliMode(next);
+                  setClaudeCliMode(next);
+                  if (next) showToast.success('Claude CLI Mode enabled — uses your Claude Pro / Max subscription');
+                  else showToast.success('Claude CLI Mode disabled');
+                }}
+              >
+                <ClaudeLogo />
+                {claudeCliChecking
+                  ? 'Checking Claude CLI...'
+                  : localClaudeCliMode
+                    ? 'CLI Mode ON — Click to use API Key instead'
+                    : 'Use Claude CLI (Pro / Max subscription)'}
+              </OAuthButton>
+              {claudeCliAvailable === false && (
+                <InstallBox>
+                  <InstallTitle>⚠ Claude CLI not found</InstallTitle>
+                  Install Claude Code CLI to use this mode. Run in your terminal:
+                  <InstallCode>npm install -g @anthropic-ai/claude-code</InstallCode>
+                  Then log in once with <code>claude</code>, and come back here to enable CLI mode.{' '}
+                  <HelpLink href="https://docs.anthropic.com/en/docs/claude-code" target="_blank">
+                    Learn more <ExternalLinkIcon />
+                  </HelpLink>
+                </InstallBox>
+              )}
+              {localClaudeCliMode && claudeCliAvailable !== false && (
+                <OAuthDivider><span>CLI handles auth automatically</span></OAuthDivider>
+              )}
+              {!localClaudeCliMode && claudeCliAvailable !== false && (
+                <OAuthDivider><span>or use API Key</span></OAuthDivider>
+              )}
+            </OAuthSection>
           )}
 
           <FormGroup>
             <Label>
-              {activeTab === 'bedrock' ? 'AWS Access Key' : isAccessToken ? 'Access Token' : 'API Key'}
+              {activeTab === 'bedrock' ? 'AWS Access Key' : 'API Key'}
             </Label>
             <InputWrapper>
               <Input
                 type="password"
-                placeholder={isAccessToken ? config.tokenPlaceholder : config.placeholder}
+                placeholder={config.placeholder}
                 value={currentKey}
                 onChange={(e) =>
                   setLocalKeys({ ...localKeys, [activeTab]: e.target.value })
                 }
                 $hasValue={!!currentKey}
+                disabled={isCliMode}
               />
-              <StatusIcon $hasValue={!!currentKey}>
-                {currentKey ? <CheckIcon /> : <CircleIcon />}
+              <StatusIcon $hasValue={!!currentKey || isCliMode}>
+                {(currentKey || isCliMode) ? <CheckIcon /> : <CircleIcon />}
               </StatusIcon>
             </InputWrapper>
-            {isAccessToken ? (
-              <>
-                <HelpLink href={config.tokenDocsUrl} target="_blank">
-                  How to get an access token <ExternalLinkIcon />
-                </HelpLink>
-                <AuthModeHint>{config.tokenHint}</AuthModeHint>
-              </>
-            ) : (
+            {!isCliMode && (
               <HelpLink href={config.docsUrl} target="_blank">
                 Get your {activeTab === 'bedrock' ? 'AWS credentials' : 'API key'} <ExternalLinkIcon />
               </HelpLink>

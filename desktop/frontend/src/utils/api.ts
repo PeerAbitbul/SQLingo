@@ -44,14 +44,13 @@ export interface ChatRequest {
   question: string;
   connection_string: string;
   database_type: 'sqlserver' | 'postgresql' | 'mysql';
-  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
-  ai_model?: string;  // Optional: specific model to use
-  api_key?: string;  // For BYOK mode (not used for bedrock/ollama)
-  auth_mode?: 'api_key' | 'access_token';  // Authentication mode
-  bedrock_config?: BedrockConfig;  // For Bedrock BYOK mode
-  ollama_base_url?: string;  // For Ollama local mode (default: http://localhost:11434)
-  mode?: 'byok';  // Always BYOK mode
-  conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>;  // Chat history for context
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter' | 'claude_cli';
+  ai_model?: string;
+  api_key?: string;
+  bedrock_config?: BedrockConfig;
+  ollama_base_url?: string;
+  mode?: 'byok';
+  conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 export interface ChatResponse {
@@ -96,10 +95,9 @@ export interface InterpretResultsRequest {
   columns: string[];
   rows: any[][];
   row_count: number;
-  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter' | 'claude_cli';
   ai_model?: string;
   api_key?: string;
-  auth_mode?: 'api_key' | 'access_token';
   bedrock_config?: BedrockConfig;
   ollama_base_url?: string;
 }
@@ -112,13 +110,12 @@ export interface InterpretResultsResponse {
 
 export interface GenerateTitleRequest {
   question: string;
-  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter';
-  ai_model?: string;  // Optional: specific model to use
-  api_key?: string;  // For BYOK mode (not used for bedrock/ollama)
-  auth_mode?: 'api_key' | 'access_token';  // Authentication mode
-  bedrock_config?: BedrockConfig;  // For Bedrock BYOK mode
-  ollama_base_url?: string;  // For Ollama local mode
-  mode?: 'byok';  // Always BYOK mode
+  ai_provider: 'claude' | 'openai' | 'gemini' | 'bedrock' | 'ollama' | 'openrouter' | 'claude_cli';
+  ai_model?: string;
+  api_key?: string;
+  bedrock_config?: BedrockConfig;
+  ollama_base_url?: string;
+  mode?: 'byok';
 }
 
 export interface GenerateTitleResponse {
@@ -398,6 +395,10 @@ class APIClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  async getCliStatus(): Promise<{ claude_cli: boolean; openai_cli: boolean }> {
+    return this.request<{ claude_cli: boolean; openai_cli: boolean }>('/cli/status');
   }
 
 }

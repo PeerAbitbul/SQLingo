@@ -9,6 +9,7 @@ import type { ChatResponse } from '../utils/api';
 import { analyzeExecutionPlan, isExecutionPlanXML } from '../utils/executionPlanApi';
 import { showToast } from '../stores/toastStore';
 import { useOllamaStore } from '../stores/ollamaStore';
+import { useCLIStore } from '../stores/cliStore';
 import { InlineLoading } from './Loading';
 import { v4 as uuidv4 } from 'uuid';
 import type { AIProvider } from '../types/aiProvider';
@@ -376,8 +377,9 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
   const { addMessage, chats, updateChat, updateMessage } = useChatStore();
   const { getConnection, buildConnectionString } = useConnectionStore();
   const { defaultAIProvider, bedrockAccessKey, bedrockSecretKey, bedrockRegion } = useSettingsStore();
-  const { getKeyForProvider, getModelForProvider, getAuthModeForProvider } = useAPIKeyStore();
+  const { getKeyForProvider, getModelForProvider } = useAPIKeyStore();
   const { selectedModel: ollamaSelectedModel, baseUrl: ollamaBaseUrl } = useOllamaStore();
+  const { claudeCliMode } = useCLIStore();
 
   useEffect(() => {
     if (!showProviderDropdown) return;
@@ -442,7 +444,8 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
       }
 
       // Get AI provider from chat or fall back to default
-      const aiProvider = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
+      const _baseProv = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
+      const aiProvider: AIProvider = (_baseProv === 'claude' && claudeCliMode) ? 'claude_cli' : _baseProv;
 
       // Show user message — prefer what they typed, then filename, then generic
       // Store the XML in hiddenContent so follow-up questions have full context
@@ -474,9 +477,8 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
       });
 
       // Get settings for analysis
-      const apiKey = getKeyForProvider(aiProvider);
+      const apiKey = aiProvider === 'claude_cli' ? undefined : getKeyForProvider(aiProvider);
       const aiModel = aiProvider === 'ollama' ? (ollamaSelectedModel || undefined) : getModelForProvider(aiProvider);
-      const planAuthMode = getAuthModeForProvider(aiProvider);
 
       // Get current connection info for context matching
       const connectedDatabase = currentChat.connectionId
@@ -498,7 +500,6 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
             region: bedrockRegion,
           }
           : undefined,
-        planAuthMode,
         aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
         connectedDatabase || undefined,
         connectedDbType || undefined,
@@ -556,10 +557,10 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
       const currentChat = chats.find((c) => c.id === chatId);
       if (!currentChat) { showToast.error('Chat not found'); return; }
 
-      const aiProvider = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
-      const apiKey = getKeyForProvider(aiProvider);
+      const _baseProv2 = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
+      const aiProvider: AIProvider = (_baseProv2 === 'claude' && claudeCliMode) ? 'claude_cli' : _baseProv2;
+      const apiKey = aiProvider === 'claude_cli' ? undefined : getKeyForProvider(aiProvider);
       const aiModel = aiProvider === 'ollama' ? (ollamaSelectedModel || undefined) : getModelForProvider(aiProvider);
-      const planAuthMode = getAuthModeForProvider(aiProvider);
 
       addMessage(chatId, {
         id: uuidv4(),
@@ -588,7 +589,6 @@ export const ChatInput = ({ chatId, isAnalyzingPlan: isAnalyzingPlanProp, pendin
         aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
           ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
           : undefined,
-        planAuthMode,
         aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
         undefined,
         undefined,
@@ -807,23 +807,25 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
     }
 
     // Get AI provider from chat or fall back to default
-    const aiProvider = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
+    const baseProvider = (currentChat.aiProvider || defaultAIProvider) as AIProvider;
+    // If Claude CLI mode is active and the selected provider is claude, use claude_cli
+    const aiProvider: AIProvider = (baseProvider === 'claude' && claudeCliMode) ? 'claude_cli' : baseProvider;
 
-    // Check credentials - need API key or access token (except for bedrock/ollama)
+    // Check credentials
     let apiKey: string | undefined;
-    const authMode = getAuthModeForProvider(aiProvider);
 
-    if (aiProvider === 'ollama') {
-      // Ollama runs locally - no API key needed, just check a model is selected
+    if (aiProvider === 'claude_cli') {
+      // CLI mode — no API key needed, claude binary handles auth
+      apiKey = undefined;
+    } else if (aiProvider === 'ollama') {
       if (!ollamaSelectedModel) {
         showToast.warning('Please select an Ollama model in Settings > Local AI');
         return;
       }
     } else if (aiProvider !== 'bedrock') {
-      apiKey = getKeyForProvider(aiProvider);
+      apiKey = getKeyForProvider(baseProvider);
       if (!apiKey) {
-        const credLabel = authMode === 'access_token' ? 'access token' : 'API key';
-        showToast.warning(`Please set your ${aiProvider.toUpperCase()} ${credLabel} in settings`);
+        showToast.warning(`Please set your ${baseProvider.toUpperCase()} API key in settings`);
         return;
       }
     }
@@ -877,7 +879,6 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
           ai_provider: aiProvider,
           ai_model: aiModel,
           api_key: apiKey,
-          auth_mode: authMode,
           bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
             ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
             : undefined,
@@ -948,8 +949,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
                 ai_provider: aiProvider,
                 ai_model: aiModel,
                 api_key: apiKey,
-                auth_mode: authMode,
-                bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
+                      bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
                   ? { access_key: bedrockAccessKey, secret_key: bedrockSecretKey, region: bedrockRegion }
                   : undefined,
                 ollama_base_url: aiProvider === 'ollama' ? ollamaBaseUrl : undefined,
@@ -981,8 +981,7 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
             ai_provider: aiProvider,
             ai_model: aiModel,
             api_key: apiKey,
-            auth_mode: authMode,
-            bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
+              bedrock_config: aiProvider === 'bedrock' && bedrockAccessKey && bedrockSecretKey
               ? {
                 access_key: bedrockAccessKey,
                 secret_key: bedrockSecretKey,
@@ -1138,9 +1137,12 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
   const currentModel = currentProvider === 'ollama'
     ? ollamaSelectedModel
     : getModelForProvider(currentProvider);
-  const modelLabel = currentModel
-    ? currentModel.length > 22 ? currentModel.slice(0, 22) + '…' : currentModel
-    : null;
+  const isCurrentCLI = currentProvider === 'claude' && claudeCliMode;
+  const modelLabel = isCurrentCLI
+    ? 'CLI mode'
+    : currentModel
+      ? currentModel.length > 22 ? currentModel.slice(0, 22) + '…' : currentModel
+      : null;
 
   const isSmallModel = (model: string | null): boolean => {
     if (!model) return false;
@@ -1219,9 +1221,12 @@ To allow SQLingo's Autonomous Agent to send you alerts, you need your own Telegr
             {showProviderDropdown && (
               <ProviderDropdown>
                 {PROVIDER_LIST.map(p => {
-                  const model = p.id === 'ollama'
-                    ? ollamaSelectedModel
-                    : getModelForProvider(p.id);
+                  const isCLI = p.id === 'claude' && claudeCliMode;
+                  const model = isCLI
+                    ? 'CLI mode'
+                    : p.id === 'ollama'
+                      ? ollamaSelectedModel
+                      : getModelForProvider(p.id);
                   return (
                     <ProviderOption
                       key={p.id}

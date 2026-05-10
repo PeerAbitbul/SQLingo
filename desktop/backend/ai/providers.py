@@ -11,5 +11,6 @@ class AIProvider(str, Enum):
     BEDROCK = "bedrock"
     OLLAMA = "ollama"
     OPENROUTER = "openrouter"
+    CLAUDE_CLI = "claude_cli"
 
 

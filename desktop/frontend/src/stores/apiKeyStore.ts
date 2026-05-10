@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AIProvider, AuthMode } from '../types/aiProvider';
+import type { AIProvider } from '../types/aiProvider';
 
 interface APIKeyState {
   claudeKey: string;
@@ -12,8 +12,6 @@ interface APIKeyState {
   geminiModel: string;
   bedrockModel: string;
   openrouterModel: string;
-  claudeAuthMode: AuthMode;
-  openaiAuthMode: AuthMode;
   setClaudeKey: (key: string) => void;
   setOpenaiKey: (key: string) => void;
   setGeminiKey: (key: string) => void;
@@ -23,11 +21,8 @@ interface APIKeyState {
   setGeminiModel: (model: string) => void;
   setBedrockModel: (model: string) => void;
   setOpenrouterModel: (model: string) => void;
-  setClaudeAuthMode: (mode: AuthMode) => void;
-  setOpenaiAuthMode: (mode: AuthMode) => void;
   getKeyForProvider: (provider: AIProvider) => string;
   getModelForProvider: (provider: AIProvider) => string;
-  getAuthModeForProvider: (provider: AIProvider) => AuthMode;
 }
 
 export const useAPIKeyStore = create<APIKeyState>()(
@@ -42,8 +37,6 @@ export const useAPIKeyStore = create<APIKeyState>()(
       geminiModel: '',
       bedrockModel: '',
       openrouterModel: '',
-      claudeAuthMode: 'api_key' as AuthMode,
-      openaiAuthMode: 'api_key' as AuthMode,
       setClaudeKey: (key) => set({ claudeKey: key }),
       setOpenaiKey: (key) => set({ openaiKey: key }),
       setGeminiKey: (key) => set({ geminiKey: key }),
@@ -53,8 +46,6 @@ export const useAPIKeyStore = create<APIKeyState>()(
       setGeminiModel: (model) => set({ geminiModel: model }),
       setBedrockModel: (model) => set({ bedrockModel: model }),
       setOpenrouterModel: (model) => set({ openrouterModel: model }),
-      setClaudeAuthMode: (mode) => set({ claudeAuthMode: mode }),
-      setOpenaiAuthMode: (mode) => set({ openaiAuthMode: mode }),
       getKeyForProvider: (provider) => {
         const state = get();
         switch (provider) {
@@ -76,18 +67,10 @@ export const useAPIKeyStore = create<APIKeyState>()(
           default: return '';
         }
       },
-      getAuthModeForProvider: (provider) => {
-        const state = get();
-        switch (provider) {
-          case 'claude': return state.claudeAuthMode;
-          case 'openai': return state.openaiAuthMode;
-          default: return 'api_key';
-        }
-      },
     }),
     {
       name: 'api-key-storage',
-      version: 9,
+      version: 10,
     }
   )
 );
