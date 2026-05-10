@@ -2,10 +2,12 @@
 Claude CLI provider — uses the local Claude Code CLI (claude -p).
 No API key needed; charges against the user's Claude Max subscription.
 """
+import os
 import shutil
 import subprocess
 import time
 import logging
+from pathlib import Path
 from typing import List, Generator, Optional
 
 from ai.base import AIProviderBase, ChatRequest, ChatResponse
@@ -13,6 +15,41 @@ from ai.base import AIProviderBase, ChatRequest, ChatResponse
 logger = logging.getLogger(__name__)
 
 CLAUDE_BINARY = "claude"
+
+# Common npm global bin paths that packaged Electron apps don't inherit
+_EXTRA_PATHS = [
+    "/usr/local/bin",
+    "/opt/homebrew/bin",          # Apple Silicon Homebrew
+    "/opt/homebrew/sbin",
+    "/usr/bin",
+    "/opt/local/bin",             # MacPorts
+    str(Path.home() / ".npm-global" / "bin"),
+    str(Path.home() / ".npm" / "bin"),
+    str(Path.home() / ".local" / "bin"),
+    str(Path.home() / "Library" / "pnpm"),
+    "/usr/local/share/npm/bin",
+]
+
+
+def _find_claude_binary() -> Optional[str]:
+    """Find the claude binary, checking PATH and common install locations."""
+    # Enrich PATH so shutil.which can find it in packaged apps
+    current_path = os.environ.get("PATH", "")
+    extra = ":".join(p for p in _EXTRA_PATHS if p not in current_path)
+    if extra:
+        os.environ["PATH"] = extra + ":" + current_path
+
+    found = shutil.which(CLAUDE_BINARY)
+    if found:
+        return found
+
+    # Direct filesystem check as fallback
+    for directory in _EXTRA_PATHS:
+        candidate = os.path.join(directory, CLAUDE_BINARY)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+
+    return None
 
 
 class ClaudeCLIProvider(AIProviderBase):
@@ -24,7 +61,7 @@ class ClaudeCLIProvider(AIProviderBase):
     def __init__(self):
         super().__init__(api_key="cli", provider_name="claude")
         self.default_model = "claude-cli"
-        binary = shutil.which(CLAUDE_BINARY)
+        binary = _find_claude_binary()
         if not binary:
             raise RuntimeError(
                 "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code"
@@ -33,7 +70,7 @@ class ClaudeCLIProvider(AIProviderBase):
 
     @staticmethod
     def is_available() -> bool:
-        return shutil.which(CLAUDE_BINARY) is not None
+        return _find_claude_binary() is not None
 
     def _build_prompt(self, request: ChatRequest) -> str:
         """Combine system prompt + conversation history into a single string."""
